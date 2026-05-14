@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CrackMapExec AD 偵察全流程演示</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            color: #e2e8f0;
+            overflow-x: hidden;
+        }
+
+        .terminal-font {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .protocol-pipe {
+            height: 4px;
+            background: #334155;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .packet {
+            width: 20px;
+            height: 10px;
+            background: #38bdf8;
+            position: absolute;
+            top: -3px;
+            border-radius: 2px;
+            box-shadow: 0 0 8px #38bdf8;
+        }
+
+        @keyframes transmit-right {
+            from { left: 0%; }
+            to { left: 100%; }
+        }
+
+        @keyframes transmit-left {
+            from { left: 100%; }
+            to { left: 0%; }
+        }
+
+        .animate-transmit-right { animation: transmit-right 1s ease-in-out forwards; }
+        .animate-transmit-left { animation: transmit-left 1s ease-in-out forwards; }
+
+        .console-line {
+            opacity: 0;
+            transform: translateY(5px);
+            transition: all 0.3s ease;
+        }
+
+        .console-line.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .app-container {
+            width: 1536px;
+            height: 700px;
+            margin: 20px auto;
+        }
+    </style>
+</head>
+<body class="p-4 flex items-center justify-center min-h-screen">
+
+<div class="app-container flex flex-col gap-4">
+    <!-- Header -->
+    <div class="flex justify-between items-center bg-slate-800 p-4 rounded-t-xl border-b border-slate-700">
+        <div class="flex items-center gap-3">
+            <i data-lucide="shield-alert" class="text-sky-400"></i>
+            <h1 class="text-xl font-bold tracking-tight">CME AD 實戰：從 TCP 連線到 MS-SAMR 深度分析</h1>
+        </div>
+        <div class="flex gap-2 text-xs terminal-font">
+            <span class="px-2 py-1 bg-slate-900 rounded border border-slate-600 text-slate-400">STATUS: ACCURATE_TRACE_v2</span>
+            <span id="step-counter" class="px-2 py-1 bg-sky-900/50 rounded border border-sky-600 text-sky-300">STEP: 0/10</span>
+        </div>
+    </div>
+
+    <!-- Main Content Grid -->
+    <div class="flex-1 grid grid-cols-12 gap-4">
+        
+        <!-- Left: Network & Protocol Visualization -->
+        <div class="col-span-8 bg-slate-900 rounded-xl p-6 flex flex-col justify-between border border-slate-800 relative">
+            <div class="flex justify-between items-center px-12 relative h-64">
+                <!-- Attacker Node -->
+                <div class="flex flex-col items-center gap-2 z-10">
+                    <div class="w-20 h-20 bg-slate-800 rounded-2xl flex items-center justify-center border-2 border-sky-500 shadow-lg shadow-sky-500/20">
+                        <i data-lucide="terminal" class="w-10 h-10 text-sky-400"></i>
+                    </div>
+                    <span class="font-bold text-sky-400">攻擊者 (Kali/CME)</span>
+                    <span class="text-[10px] terminal-font text-slate-500">192.168.1.50</span>
+                </div>
+
+                <!-- Connection Pipes -->
+                <div class="flex-1 px-4 mt-[-40px]">
+                    <div class="mb-4 relative">
+                        <div class="flex justify-between text-[10px] text-slate-500 mb-1">
+                            <span>TCP (Port 445)</span>
+                            <span id="tcp-func" class="text-slate-600 uppercase italic">Disconnected</span>
+                        </div>
+                        <div class="protocol-pipe rounded-full bg-slate-800" id="pipe-tcp">
+                            <div id="packet-container"></div>
+                        </div>
+                    </div>
+                    <div class="mb-4 relative">
+                        <div class="flex justify-between text-[10px] text-slate-500 mb-1">
+                            <span>SMB v3 (Transport Layer)</span>
+                            <span id="pipe-func" class="text-slate-600 uppercase italic">Idle</span>
+                        </div>
+                        <div class="protocol-pipe rounded-full bg-slate-800" id="pipe-smb"></div>
+                    </div>
+                    <div class="relative">
+                        <div class="flex justify-between text-[10px] text-slate-500 mb-1">
+                            <span>DCERPC (\PIPE\samr)</span>
+                            <span id="rpc-func" class="text-slate-600 uppercase italic">Idle</span>
+                        </div>
+                        <div class="protocol-pipe rounded-full bg-slate-800" id="pipe-rpc"></div>
+                    </div>
+                </div>
+
+                <!-- Target Node -->
+                <div class="flex flex-col items-center gap-2 z-10">
+                    <div class="w-20 h-20 bg-slate-800 rounded-2xl flex items-center justify-center border-2 border-slate-600 shadow-lg">
+                        <i data-lucide="server" class="w-10 h-10 text-slate-400"></i>
+                    </div>
+                    <span class="font-bold text-slate-400">DC01 (Windows Server)</span>
+                    <span class="text-[10px] terminal-font text-slate-500">192.168.1.100</span>
+                </div>
+            </div>
+
+            <!-- Detailed Packet Inspection Panel -->
+            <div class="bg-slate-950 rounded-lg p-4 border border-slate-800 h-48 flex flex-col">
+                <div class="flex justify-between items-center mb-2 shrink-0">
+                    <div class="flex items-center gap-2 text-xs font-semibold text-slate-400 uppercase tracking-widest">
+                        <i data-lucide="binary" class="w-3 h-3 text-sky-500"></i> 流量監聽與解析 (Protocol Analysis)
+                    </div>
+                    <div id="opnum-tag" class="text-[10px] terminal-font bg-slate-800 px-2 py-0.5 rounded text-slate-400">INFO: N/A</div>
+                </div>
+                <div class="flex-1 flex gap-4 min-h-0">
+                    <div class="flex-1 flex flex-col border-r border-slate-800 pr-2">
+                        <div class="text-[10px] text-sky-500/70 mb-1 font-bold uppercase">>>> 請求 (Request)</div>
+                        <div id="inspect-req" class="terminal-font text-[11px] text-sky-400/90 overflow-y-auto italic whitespace-pre-wrap">等待操作...</div>
+                    </div>
+                    <div class="flex-1 flex flex-col pl-2">
+                        <div class="text-[10px] text-green-500/70 mb-1 font-bold uppercase"><<< 回應 (Response)</div>
+                        <div id="inspect-res" class="terminal-font text-[11px] text-green-400/90 overflow-y-auto italic whitespace-pre-wrap">等待回應...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: Terminal & Controls -->
+        <div class="col-span-4 flex flex-col gap-4">
+            <div class="flex-1 bg-black rounded-xl p-4 border border-slate-800 flex flex-col">
+                <div class="flex items-center gap-2 mb-3 border-b border-slate-800 pb-2">
+                    <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                    <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                    <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                    <span class="text-xs text-slate-500 ml-2 terminal-font">cme_interaction.log</span>
+                </div>
+                <div id="console-output" class="flex-1 terminal-font text-[12px] overflow-y-auto space-y-1"></div>
+            </div>
+
+            <div class="bg-slate-800 rounded-xl p-6 border border-slate-700 shadow-xl">
+                <div class="text-sm font-semibold text-slate-400 mb-4 flex items-center gap-2">
+                    <i data-lucide="play-circle" class="w-4 h-4 text-sky-400"></i> 攻擊步驟控制
+                </div>
+                <div id="instruction-text" class="text-sm mb-6 text-slate-300 min-h-[40px] leading-relaxed">
+                    初始化完成。請點擊按鈕開始與目標建立連線。
+                </div>
+                <button id="next-btn" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-all transform active:scale-95 shadow-lg shadow-sky-900/40">
+                    <span>執行下一步</span>
+                    <i data-lucide="chevron-right" class="w-5 h-5"></i>
+                </button>
+                <button id="reset-btn" class="w-full mt-2 text-slate-500 hover:text-slate-300 text-xs py-1 transition-colors">
+                    重置模擬環境
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    lucide.createIcons();
+
+    const steps = [
+        {
+            instruction: "第一步：TCP 三向交握。建立與目標 445 埠號的基礎傳輸通道。",
+            pipe: "TCP",
+            func: "Handshake",
+            tag: "TCP:445",
+            req: "TCP [SYN] Seq=0 Win=64240 Len=0",
+            res: "TCP [SYN, ACK] Seq=0 Ack=1 Win=65535\nTCP [ACK] Seq=1 Ack=1",
+            console: "TCP_TRACE   Connecting to 192.168.1.100:445...\nTCP_TRACE   Connection established."
+        },
+        {
+            instruction: "第二步：SMB 協定協商 (Negotiate)。此時僅能確認雙方支援的 SMB 版本，無法得知主機身份。",
+            pipe: "SMB",
+            func: "Negotiate",
+            tag: "SMB_NEG",
+            req: "SMB2 Negotiate Protocol Request\nSupported Dialects: 2.0.2, 2.1, 3.0, 3.1.1",
+            res: "SMB2 Negotiate Protocol Response\nSelected Dialect: 3.1.1\nSecurity Mode: Signing Enabled",
+            console: "SMB_TRACE   Negotiating SMB dialects...\nSMB_TRACE   Target supports SMB 3.1.1. Proceeding to auth."
+        },
+        {
+            instruction: "第三步：Session Setup (NTLMSSP)。透過認證挑戰回應，CME 此時才從目標回應中解析出 Domain 與 Name。",
+            pipe: "SMB",
+            func: "Session Setup",
+            tag: "SMB_AUTH",
+            req: "SMB2 Session Setup Request (Anonymous)\nNTLMSSP_NEGOTIATE",
+            res: "SMB2 Session Setup Response (SUCCESS)\nNTLMSSP_CHALLENGE [Domain: LAB, Name: DC01]\nSessionID: 0x45",
+            console: "SMB         192.168.1.100   445    DC01             [*] Windows 10.0 Build 17763 (name:DC01) (domain:lab.local)\nSMB         192.168.1.100   445    DC01             [+] lab.local\\: (Guest:False)"
+        },
+        {
+            instruction: "第四步：連接 IPC$ 命名管道。建立 Tree Connect 以便訪問後續的 RPC 服務。",
+            pipe: "SMB",
+            func: "Tree Connect",
+            tag: "SMB_TREE",
+            req: "SMB2 TREE_CONNECT Request\nPath: \\\\192.168.1.100\\IPC$",
+            res: "SMB2 TREE_CONNECT Response\nStatus: SUCCESS, TreeID: 0x1",
+            console: "SMB_TRACE   Tree Connect: \\\\192.168.1.100\\IPC$ [SUCCESS]"
+        },
+        {
+            instruction: "第五步：綁定 RPC 管道 (samr)。開啟命名管道並執行 RPC 介面綁定。",
+            pipe: "RPC",
+            func: "Bind SAMR",
+            tag: "RPC_BIND",
+            req: "SMB2_CREATE: samr\nRPC_BIND: UUID 12345678-1234-abcd-ef00-0123456789ac",
+            res: "SMB2_CREATE Response [FileID: 0xFE22]\nRPC_BIND_ACK [Interface Accepted]",
+            console: "RPC_TRACE   Successfully bound to MS-SAMR interface."
+        },
+        {
+            instruction: "第六步：執行 SamrConnect5。索取伺服器物件控制代碼，準備開始列舉。",
+            pipe: "RPC",
+            func: "SamrConnect5",
+            tag: "OPNUM: 64",
+            req: "SamrConnect5 (Opnum 64)\nServerName: \\\\DC01, Access: 0x32",
+            res: "SamrConnect5 Response [SUCCESS]\nServerHandle: 0x00...01",
+            console: "SMB         192.168.1.100   445    DC01             [*] Enumerating domain users via SAMR"
+        },
+        {
+            instruction: "第七步：開啟網域控制代碼 (SamrOpenDomain)。鎖定目標網域物件。",
+            pipe: "RPC",
+            func: "OpenDomain",
+            tag: "OPNUM: 7",
+            req: "SamrOpenDomain (Opnum 7)\nDomainSid: S-1-5-21-...\nDesiredAccess: 0x305",
+            res: "SamrOpenDomain Response [SUCCESS]\nDomainHandle: 0x00...02",
+            console: "RPC_TRACE   Domain context opened successfully."
+        },
+        {
+            instruction: "第八步：批次列舉使用者 (EnumUsers)。獲取基本的 RID 與帳號清單。",
+            pipe: "RPC",
+            func: "EnumUsers",
+            tag: "OPNUM: 13",
+            req: "SamrEnumDomainUsers (Opnum 13)\nDomainHandle: 0x02, Context: 0",
+            res: "SamrEnumDomainUsers Response [SUCCESS]\nUsers: {RID 500: 'Admin'}, {RID 1105: 'brian.test'}",
+            console: "SMB         192.168.1.100   445    DC01             [+] lab.local\\Administrator\nSMB         192.168.1.100   445    DC01             [+] lab.local\\brian.test"
+        },
+        {
+            instruction: "第九步：查詢使用者描述 (brian.test)。針對特定 RID 取得詳細資訊。",
+            pipe: "RPC",
+            func: "QueryUserInfo",
+            tag: "OPNUM: 36",
+            req: "SamrQueryInformationUser (Opnum 36)\nUserHandle [RID 1105], InfoClass: 13",
+            res: "SamrQueryInformationUser Response [SUCCESS]\nDescription: 'Initial password: Password123'",
+            console: "SMB         192.168.1.100   445    DC01             [+] lab.local\\brian.test (Description: Initial password: Password123)"
+        },
+        {
+            instruction: "第十步：完整清理與中斷。包含中斷 Tree 連線、登出會話以及 TCP 的四向揮手。",
+            pipe: "TCP",
+            func: "Cleanup",
+            tag: "FINISH",
+            req: "SamrCloseHandle (Opnum 1)\nSMB2 TREE_DISCONNECT (TreeID: 0x1)\nSMB2 LOGOFF (SessionID: 0x45)\nTCP [FIN, ACK]",
+            res: "SamrCloseHandle Response [SUCCESS]\nSMB2 TREE_DISCONNECT Response [SUCCESS]\nSMB2 LOGOFF Response [SUCCESS]\nTCP [ACK] -> [FIN, ACK] -> [ACK]",
+            console: "SMB_TRACE   Tree disconnected. Session logged off.\nTCP_TRACE   Connection closed. Done."
+        }
+    ];
+
+    let currentStep = 0;
+    const nextBtn = document.getElementById('next-btn');
+    const resetBtn = document.getElementById('reset-btn');
+    const stepCounter = document.getElementById('step-counter');
+    const instructionText = document.getElementById('instruction-text');
+    const inspectReq = document.getElementById('inspect-req');
+    const inspectRes = document.getElementById('inspect-res');
+    const consoleOutput = document.getElementById('console-output');
+    const pipeTcp = document.getElementById('pipe-tcp');
+    const pipeSmb = document.getElementById('pipe-smb');
+    const pipeRpc = document.getElementById('pipe-rpc');
+    const tcpFunc = document.getElementById('tcp-func');
+    const pipeFunc = document.getElementById('pipe-func');
+    const rpcFunc = document.getElementById('rpc-func');
+    const opnumTag = document.getElementById('opnum-tag');
+
+    function addConsoleLine(text) {
+        const lines = text.split('\n');
+        lines.forEach(t => {
+            const line = document.createElement('div');
+            line.className = 'console-line terminal-font text-sky-300';
+            if (t.includes('[+]')) line.className = 'console-line terminal-font text-green-400 font-bold';
+            if (t.includes('[*]')) line.className = 'console-line terminal-font text-yellow-400';
+            if (t.includes('RPC_TRACE')) line.className = 'console-line terminal-font text-indigo-400 italic text-[11px]';
+            if (t.includes('TCP_TRACE')) line.className = 'console-line terminal-font text-slate-500 italic text-[11px]';
+            if (t.includes('SMB_TRACE')) line.className = 'console-line terminal-font text-sky-600 italic text-[11px]';
+            
+            line.innerText = t;
+            consoleOutput.appendChild(line);
+            setTimeout(() => line.classList.add('visible'), 10);
+        });
+        consoleOutput.scrollTop = consoleOutput.scrollHeight;
+    }
+
+    function triggerPacket(pipeType, direction) {
+        const packet = document.createElement('div');
+        packet.className = `packet ${direction === 'request' ? 'animate-transmit-right' : 'animate-transmit-left'}`;
+        if (pipeType === 'TCP') pipeTcp.appendChild(packet);
+        else if (pipeType === 'SMB') pipeSmb.appendChild(packet);
+        else pipeRpc.appendChild(packet);
+        setTimeout(() => packet.remove(), 1000);
+    }
+
+    nextBtn.addEventListener('click', () => {
+        if (currentStep >= steps.length) return;
+
+        const step = steps[currentStep];
+        instructionText.innerText = step.instruction;
+        stepCounter.innerText = `STEP: ${currentStep + 1}/${steps.length}`;
+        opnumTag.innerText = `INFO: ${step.tag}`;
+        
+        triggerPacket(step.pipe, 'request');
+        inspectReq.innerText = step.req;
+        inspectRes.innerText = "Processing...";
+
+        setTimeout(() => {
+            triggerPacket(step.pipe, 'response');
+            inspectRes.innerText = step.res;
+            addConsoleLine(step.console);
+            
+            if (step.pipe === 'TCP') {
+                tcpFunc.innerText = step.func;
+                tcpFunc.className = "text-sky-400 uppercase italic font-bold";
+                pipeTcp.classList.add('bg-sky-900/40');
+            } else if (step.pipe === 'SMB') {
+                pipeFunc.innerText = step.func;
+                pipeFunc.className = "text-emerald-400 uppercase italic font-bold";
+                pipeSmb.classList.add('bg-emerald-900/40');
+            } else {
+                rpcFunc.innerText = step.func;
+                rpcFunc.className = "text-indigo-400 uppercase italic font-bold";
+                pipeRpc.classList.add('bg-indigo-900/40');
+            }
+        }, 1200);
+
+        currentStep++;
+        if (currentStep === steps.length) {
+            nextBtn.innerHTML = '<span>流程結束</span>';
+            nextBtn.classList.replace('bg-sky-600', 'bg-green-600');
+        }
+    });
+
+    resetBtn.addEventListener('click', () => {
+        location.reload();
+    });
+
+</script>
+
+</body>
+</html>
