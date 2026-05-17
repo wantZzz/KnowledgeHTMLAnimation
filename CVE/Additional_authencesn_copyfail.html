@@ -145,8 +145,8 @@
         const MEM_SIZE = 36;
         const ASSOC_LEN = 8;
         const DATA_LEN = 16;
-        const TAG_LEN = 4;
-        const PAGE_CACHE_START = 28;
+        const TAG_LEN = 8;
+        const PAGE_CACHE_START = 24;
 
         const VAL_HI = "HI";
         const VAL_L0 = "L0";
@@ -228,7 +228,7 @@
             {
                 title: "Step 3: 越界寫入！ (致命)",
                 code: "scatterwalk_map_and_copy(tmp + 1, dst, 28, 4, 1);",
-                log: "致命錯誤：嘗試將 L0 寫在 Tag 之後。這改寫了 Page Cache 中的檔案內容！",
+                log: "致命錯誤：嘗試將 L0 寫在 Tag 之後。這改寫了 認證碼 即 Page Cache 中的檔案內容！",
                 action: () => {
                     highlightCells(PAGE_CACHE_START, PAGE_CACHE_START + 3);
                     for(let i=PAGE_CACHE_START; i < PAGE_CACHE_START + 4; i++) {
@@ -240,10 +240,10 @@
             {
                 title: "Step 4: 認證與掃描",
                 code: "hmac_verify(dst + 4, 28); // 掃描 AAD[4:] 到 Tag\nif (auth_failed) return -EBADMSG;",
-                log: "HMAC 引擎開始掃描。依序掃描 ADD高位、密文、認證碼、ADD低位 ，本次模擬 HMAC 認證失敗的處理",
+                log: "HMAC 引擎開始掃描。依序掃描 ADD高位、密文、ADD低位 ，本次模擬 HMAC 認證失敗的處理",
                 action: async () => {
                     highlightCells(-1, -1);
-                    await runScanAnimation(4, 31);
+                    await runScanAnimation(4, 27);
                     const container = document.getElementById('memory-container');
                     container.classList.add('ring-4', 'ring-red-600', 'ring-opacity-60');
                     setTimeout(() => container.classList.remove('ring-4'), 800);
@@ -251,8 +251,8 @@
             },
             {
                 title: "Step 5: 清理不全",
-                code: "decrypt_tail(): Restore AAD...\n// 忘記處理越界位置！",
-                log: "清理函式還原了 AAD，但留在 Page Cache 中的 L0 污染依然存在，導致越界寫入。",
+                code: "decrypt_tail(): Restore AAD...\n// 沒處理越界位置！",
+                log: "清理函式還原了 AAD，但留在 認證碼 中的 L0 污染依然存在，導致越界寫入(解密時不需要認證碼)。",
                 action: () => { for(let i=4; i<=7; i++) memory[i].val = VAL_L0; highlightCells(-1, -1); }
             }
         ];
