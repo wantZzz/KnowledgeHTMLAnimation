@@ -239,7 +239,7 @@
             {
                 title: "Step 1: 備份序列號",
                 code: "scatterwalk_map_and_copy(tmp, dst, 0, 8, 0);",
-                log: "讀取 AAD 的 8 個位元組。內核暫存器 tmp 現在持有 HI 與 L0 的備份。",
+                log: "讀取 AAD 的 8 個位元組。核心暫存器 tmp 現在持有 HI 與 L0 的備份。",
                 action: () => { highlightCells(0, 7); tmp[0] = VAL_HI; tmp[1] = VAL_L0; }
             },
             {
