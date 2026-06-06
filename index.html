@@ -1,0 +1,513 @@
+---
+layout: null
+title: "以 HTML 動畫學知識"
+description: "收錄並歸檔所有學習過程中用於輔助理解產生的多步 HTML 動畫。"
+---
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page.title }}</title>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* ── CSS 變數定義（支援亮色與暗色模式切換） ── */
+        :root {
+            --bg-body: #f4f6f9;
+            --bg-card: #ffffff;
+            --text-primary: #1e293b;
+            --text-secondary: #475569;
+            --text-muted: #64748b;
+            --border-color: #e2e8f0;
+            --border-light: #f1f5f9;
+            
+            --bg-stat-icon-blue: #eff6ff;
+            --bg-stat-icon-green: #f0fdf4;
+            --bg-stat-icon-purple: #faf5ff;
+            
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.02);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px -1px rgba(0, 0, 0, 0.01);
+            --shadow-lg: 0 10px 25px -5px rgba(59, 130, 246, 0.2);
+            
+            --icon-default-bg: #eff6ff;
+            --icon-default-color: #2563eb;
+            --navbar-border: #e2e8f0;
+        }
+
+        :root.dark {
+            --bg-body: #0f172a;
+            --bg-card: #1e293b;
+            --text-primary: #f8fafc;
+            --text-secondary: #cbd5e1;
+            --text-muted: #94a3b8;
+            --border-color: #334155;
+            --border-light: #1e293b;
+            
+            --bg-stat-icon-blue: rgba(37, 99, 235, 0.15);
+            --bg-stat-icon-green: rgba(22, 163, 74, 0.15);
+            --bg-stat-icon-purple: rgba(147, 51, 234, 0.15);
+            
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.2);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+            --shadow-lg: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+            
+            --icon-default-bg: rgba(37, 99, 235, 0.15);
+            --icon-default-color: #60a5fa;
+            --navbar-border: #1e293b;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        * { font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif; }
+        body { background: var(--bg-body); color: var(--text-primary); overflow-x: hidden; transition: background 0.3s, color 0.3s; }
+
+        /* 全域容器 */
+        .portal-wrapper { max-width: 1200px; margin: 0 auto; padding: 0 20px 80px; }
+
+        /* ── 頂部 Navigation Bar ── */
+        .navbar {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 18px 0; border-bottom: 1px solid var(--navbar-border); margin-bottom: 24px; flex-direction: row-reverse;
+        }
+        .nav-logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--text-primary); }
+        .nav-logo i { color: #2563eb; }
+        .nav-links { display: flex; gap: 20px; list-style: none; }
+        .nav-link { font-size: 14px; color: var(--text-secondary); text-decoration: none; font-weight: 500; transition: color .2s; }
+        .nav-link:hover { color: #2563eb; }
+
+        /* ── 首頁專屬 Hero 橫幅 ── */
+        .hero-banner {
+            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+            border-radius: 16px; padding: 48px 32px; text-align: center; color: #ffffff;
+            box-shadow: var(--shadow-lg);
+            margin-bottom: 32px; position: relative; overflow: hidden;
+        }
+        .hero-banner::before {
+            content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.08) 0%, transparent 80%);
+            pointer-events: none;
+        }
+        .hero-badge {
+            display: inline-block; background: rgba(255, 255, 255, 0.15); border: 1px solid rgba(255, 255, 255, 0.25);
+            padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; letter-spacing: 1px;
+            margin-bottom: 16px; text-transform: uppercase;
+        }
+        .hero-title { font-size: 32px; font-weight: 700; margin-bottom: 12px; letter-spacing: -0.5px; }
+        .hero-subtitle { font-size: 16px; color: #bfdbfe; font-weight: 300; max-width: 650px; margin: 0 auto; line-height: 1.6; }
+
+        /* ── 數據統計卡片 ── */
+        .stats-row {
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 32px;
+        }
+        .stat-card {
+            background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 18px 20px;
+            display: flex; align-items: center; gap: 14px; box-shadow: var(--shadow-sm);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .stat-icon {
+            width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+        }
+        .stat-icon-blue { background: var(--bg-stat-icon-blue); color: #2563eb; }
+        .stat-icon-green { background: var(--bg-stat-icon-green); color: #16a34a; }
+        .stat-icon-purple { background: var(--bg-stat-icon-purple); color: #9333ea; }
+        
+        .stat-info-container {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .stat-num { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+        .stat-lbl { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
+        .stat-commit { font-size: 11px; color: var(--text-muted); font-family: 'SF Mono', 'Consolas', monospace; font-weight: 500; }
+
+        @media (max-width: 768px) {
+            .stats-row { grid-template-columns: 1fr; }
+        }
+
+        /* ── 主導覽控制區 ── */
+        .main-control-bar {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 24px; padding-bottom: 12px; border-bottom: 1px solid var(--border-color);
+        }
+        .section-indicator-title {
+            display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; color: var(--text-primary);
+        }
+        .results-indicator {
+            font-size: 13px; color: var(--text-secondary); font-weight: 500; background: var(--border-color); padding: 3px 10px; border-radius: 20px;
+            transition: background 0.3s, color 0.3s;
+        }
+
+        /* ── 首頁子目錄卡片網格 ── */
+        .portal-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 24px;
+        }
+        @media (max-width: 640px) {
+            .portal-grid { grid-template-columns: 1fr; }
+        }
+
+        .dir-card {
+            background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px;
+            overflow: hidden; display: flex; flex-direction: column;
+            box-shadow: var(--shadow-md);
+            transition: transform .2s, box-shadow .2s, background 0.3s, border-color 0.3s;
+        }
+        .dir-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 20px -8px rgba(0, 0, 0, 0.15);
+        }
+
+        /* 卡片頂部 */
+        .dir-header {
+            padding: 20px 20px 16px; border-bottom: 1px solid var(--border-light);
+            display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+        }
+        .dir-title-area { display: flex; align-items: center; gap: 12px; min-width: 0; }
+        
+        .dir-icon-wrap {
+            width: 38px; height: 38px; border-radius: 9px;
+            display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+        }
+        .icon-default { background: var(--icon-default-bg); color: var(--icon-default-color); transition: background 0.3s, color 0.3s; }
+
+        .dir-title {
+            font-size: 16px; font-weight: 700; color: var(--text-primary); text-decoration: none;
+            display: flex; align-items: center; gap: 4px; line-height: 1.4;
+        }
+        .dir-title:hover { color: #2563eb; }
+        .dir-title svg { opacity: 0; transition: opacity .15s; color: #2563eb; }
+        .dir-card:hover .dir-title svg { opacity: 1; }
+
+        .dir-path { font-size: 12px; color: var(--text-muted); font-family: 'SF Mono', monospace; margin-top: 2px; }
+
+        /* 卡片主體 */
+        .dir-body { padding: 18px 20px; flex: 1; display: flex; flex-direction: column; }
+        .dir-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
+
+        /* ──【保留樣式】未來若需要「最近新增」或「精選收錄」可用此區塊 ── */
+        .recent-files-box { margin-top: 16px; border-top: 1px dashed var(--border-color); padding-top: 14px; display: none; }
+        .files-header { font-size: 11.5px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 8px; }
+        .file-list { display: flex; flex-direction: column; gap: 6px; }
+        .file-item {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 6px 10px; border-radius: 6px; background: var(--bg-body);
+            border: 1px solid var(--border-color); text-decoration: none; font-size: 12.5px; color: var(--text-secondary);
+            transition: all .15s;
+        }
+        .file-item:hover { background: var(--border-color); color: #2563eb; }
+        .file-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .file-left svg { color: var(--text-muted); flex-shrink: 0; }
+        .file-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+        /* ── Footer ── */
+        .footer-sec { border-top: 1px solid var(--border-color); padding: 32px 0; text-align: center; font-size: 12.5px; color: var(--text-muted); margin-top: 48px; }
+
+        /* ── 懸浮按鈕核心配置 ── */
+        .floating-btn {
+            position: fixed; z-index: 999;
+            width: 44px; height: 44px; border-radius: 50%;
+            background: var(--bg-card); border: 1px solid var(--border-color);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; color: var(--text-secondary);
+            transition: background .2s, color .2s, border-color .2s, transform .2s, bottom .2s, opacity .2s;
+        }
+        .floating-btn:hover { background: #2563eb; color: #ffffff; border-color: #2563eb; }
+
+        /* 回頁首懸浮按鈕 */
+        #backToTop {
+            bottom: 32px; right: 32px;
+            opacity: 0; pointer-events: none;
+            transform: translateY(8px);
+        }
+        #backToTop.visible { opacity: 1; pointer-events: auto; transform: translateY(0); }
+
+        /* 黑暗模式切換按鈕（預設置底，當回到頁首按鈕出現時會上移至 bottom: 88px） */
+        #darkModeToggle {
+            bottom: 32px; right: 32px;
+        }
+        #darkModeToggle.shifted {
+            bottom: 88px;
+        }
+    </style>
+</head>
+<body>
+
+<!-- Jekyll 液態計數與篩選邏輯 -->
+{% assign category_pages_all = site.pages | where: "type", "category_index" %}
+{% assign category_pages = "" | split: "" %}
+
+{% for cat in category_pages_all %}
+    {% if cat.name == "index.html" %}
+        {% assign category_pages = category_pages | push: cat %}
+    {% endif %}
+{% endfor %}
+
+{% assign category_count = category_pages | size %}
+
+{% assign total_articles = 0 %}
+{% for p in site.pages %}
+    {% if p.type != "category_index" and p.url != "/" and p.url != "/index.html" and p.dir != "/" %}
+        {% assign total_articles = total_articles | plus: 1 %}
+    {% endif %}
+{% endfor %}
+
+<div class="portal-wrapper">
+
+    <!-- 頂部導航欄 -->
+    <nav class="navbar">
+        <ul class="nav-links">
+            <li>
+                <!-- 動態顯示 GitHub Repository NWO 並使用平面化 SVG 圖擺脫框線樣式 -->
+                <a href="{{ site.github.repository_url | default: 'github/repository' }}" target="_blank" class="nav-link" style="display: flex; align-items: center; gap: 6px;">
+                    <svg viewBox="0 0 24 24" fill="currentColor" style="width: 16px; height: 16px; flex-shrink: 0; transition: color 0.2s;">
+                        <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                    </svg>
+                    <span>{{ site.github.repository_nwo | default: "儲存庫連結" }}</span>
+                </a>
+            </li>
+        </ul>
+    </nav>
+
+    <!-- 頂部大氣 Hero 區塊 -->
+    <header class="hero-banner">
+        <span class="hero-badge">Knowledge Database</span>
+        <h1 class="hero-title">{{ page.title }}</h1>
+        <p class="hero-subtitle">{{ page.description }}</p>
+    </header>
+
+    <!-- 數據概覽列 (透過 Jekyll 動態注入數據) -->
+    <div class="stats-row">
+        <div class="stat-card">
+            <div class="stat-icon stat-icon-blue">
+                <i data-lucide="folder-open" style="width:20px;height:20px;"></i>
+            </div>
+            <div class="stat-info-container">
+                <div class="stat-num">{{ category_count }} 個</div>
+                <div class="stat-lbl">子目錄</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon stat-icon-green">
+                <i data-lucide="file-check-2" style="width:20px;height:20px;"></i>
+            </div>
+            <div class="stat-info-container">
+                <div class="stat-num">{{ total_articles }} 篇</div>
+                <div class="stat-lbl">收錄主題文章</div>
+            </div>
+        </div>
+        <!-- 結合最後更新日期與 Commit SHA -->
+        <div class="stat-card">
+            <div class="stat-icon stat-icon-purple">
+                <i data-lucide="activity" style="width:20px;height:20px;"></i>
+            </div>
+            <div class="stat-info-container">
+                {% assign custom_date = site.time | date: "%Y/%m/%d %H" %}
+                <div class="stat-num" style="font-size: 18px;">{{ custom_date }}:00 UTC</div>
+                <div class="stat-lbl" style="display: flex; align-items: center; gap: 4px;">
+                    <span>最後更新版本</span>
+                    {% if site.github.build_revision %}
+                    <span class="stat-commit">({{ site.github.build_revision | slice: 0, 7 }})</span>
+                    {% else %}
+                    <span class="stat-commit">(dev-local)</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 標題與數據控制列 -->
+    <div class="main-control-bar">
+        <div class="section-indicator-title">
+            <i data-lucide="folder" style="width:18px;height:18px;color:var(--text-secondary);"></i>
+            <span>所有子目錄索引</span>
+        </div>
+        <div class="results-indicator" id="countBadge">{{ category_count }} 筆項目</div>
+    </div>
+
+    <!-- 2/3欄 網格卡片區 -->
+    <div class="portal-grid" id="portalGrid"></div>
+
+</div>
+
+<!-- 回頁首按鈕 -->
+<button id="backToTop" class="floating-btn" aria-label="回到頁首" onclick="window.scrollTo({top:0,behavior:'smooth'})">
+    <i data-lucide="arrow-up" style="width:18px;height:18px;"></i>
+</button>
+
+<!-- 黑暗模式切換按鈕（動態追蹤回到頁首狀態，並向上推移） -->
+<button id="darkModeToggle" class="floating-btn" aria-label="切換黑暗模式" onclick="toggleDarkMode()">
+    <i id="themeIcon" data-lucide="moon" style="width:18px;height:18px;"></i>
+</button>
+
+<!-- 頁尾 -->
+<footer class="footer-sec">
+    <div>Copyright © {{ site.time | date: "%Y" }} XXX. All rights reserved. Hosted on GitHub Pages as a static website.</div>
+</footer>
+
+<script>
+    // ── 黑暗模式控制器（支援 Cookie 與 LocalStorage 雙向存取） ──
+    const htmlEl = document.documentElement;
+    const themeIcon = document.getElementById('themeIcon');
+
+    // 寫入 Cookie 輔助函數 (設定為 365 天過期，path=/ 代表整站同網域皆可存取)
+    function setCookie(name, value, days) {
+        let expires = "";
+        if (days) {
+            const date = new Date();
+            date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+            expires = "; expires=" + date.toUTCString();
+        }
+        document.cookie = name + "=" + (value || "") + expires + "; path=/; SameSite=Lax";
+    }
+
+    // 讀取 Cookie 輔助函數
+    function getCookie(name) {
+        const nameEQ = name + "=";
+        const ca = document.cookie.split(';');
+        for (let i = 0; i < ca.length; i++) {
+            let c = ca[i];
+            while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+            if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+        }
+        return null;
+    }
+
+    // 載入時初始化主題（優先權：Cookie -> LocalStorage -> 系統預設偏好）
+    const savedTheme = getCookie('theme') || localStorage.getItem('theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    
+    if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
+        htmlEl.classList.add('dark');
+        themeIcon.setAttribute('data-lucide', 'sun');
+    } else {
+        htmlEl.classList.remove('dark');
+        themeIcon.setAttribute('data-lucide', 'moon');
+    }
+
+    function toggleDarkMode() {
+        const isDark = htmlEl.classList.toggle('dark');
+        const themeValue = isDark ? 'dark' : 'light';
+        
+        // 同步寫入 Cookie 與 LocalStorage
+        setCookie('theme', themeValue, 365);
+        localStorage.setItem('theme', themeValue);
+        
+        themeIcon.setAttribute('data-lucide', isDark ? 'sun' : 'moon');
+        lucide.createIcons();
+    }
+
+    // ── Jekyll 後端自動生成子目錄資訊陣列 ──────────────────
+    const allPagesData = [];
+
+    {% for cat in category_pages %}
+        {% assign cat_dir = cat.dir %}
+        allPagesData.push({
+            // 自動移除路徑前後斜線，如 "/ai-tools/" 轉換成乾淨的 "ai-tools"
+            path: {{ cat.dir | jsonify }}.replace(/^\/|\/$/g, ''),
+            url: {{ cat.url | relative_url | jsonify }},
+            title: {{ cat.title | default: cat.name | jsonify }},
+            description: {{ cat.description | default: "暫無描述。" | jsonify }},
+            role: {{ cat.role | default: "primary" | jsonify }},
+            related: [
+                {% assign first = true %}
+                {% for p in site.pages %}
+                    {% if p.dir == cat_dir and p.url != cat.url %}
+                        {% unless first %},{% endunless %}
+                        {
+                            path: {{ p.url | jsonify }}.replace(/^\/|\/$/g, ''),
+                            url: {{ p.url | relative_url | jsonify }},
+                            title: {{ p.title | default: p.name | jsonify }},
+                            role: {{ p.role | default: "primary" | jsonify }}
+                        }
+                        {% assign first = false %}
+                    {% endif %}
+                {% endfor %}
+            ]
+        });
+    {% endfor %}
+
+    // 在前端依據語系名稱排序
+    allPagesData.sort((a, b) => a.title.localeCompare(b.title, 'zh-Hant'));
+
+    function esc(str) {
+        return String(str)
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+            .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // 建立卡片 DOM
+    function buildDirCard(p) {
+        const iconClass = 'icon-default';
+        const iconName = 'folder';
+
+        /* 【保留樣式區塊】
+           未來如欲啟用「最近新增」或「精選收錄」列表，只需：
+           1. 將本 HTML style 區塊中 .recent-files-box 的 "display: none" 移除。
+        */
+        let recentFilesHTML = '';
+        if (p.related && p.related.length > 0) {
+            recentFilesHTML = `
+                <div class="recent-files-box">
+                    <div class="files-header">最近新增</div>
+                    <div class="file-list">
+                        ${p.related.map(rel => `
+                            <a href="${esc(rel.url)}" class="file-item">
+                                <div class="file-left">
+                                    <i data-lucide="file-text" style="width:13px;height:13px;"></i>
+                                    <span class="file-name">${esc(rel.title)}</span>
+                                </div>
+                                <i data-lucide="chevron-right" style="width:12px;height:12px;color:var(--text-muted);"></i>
+                            </a>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        const card = document.createElement('div');
+        card.className = 'dir-card';
+
+        card.innerHTML = `
+            <div class="dir-header">
+                <div class="dir-title-area">
+                    <div class="dir-icon-wrap ${iconClass}">
+                        <i data-lucide="${iconName}" style="width:18px;height:18px;"></i>
+                    </div>
+                    <div style="min-width: 0;">
+                        <a href="${esc(p.url)}" class="dir-title">
+                            ${esc(p.title)}
+                            <i data-lucide="arrow-up-right" style="width:14px;height:14px;"></i>
+                        </a>
+                        <div class="dir-path">${esc(p.path)}</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="dir-body">
+                <p class="dir-desc">${esc(p.description)}</p>
+                ${recentFilesHTML}
+            </div>
+        `;
+        return card;
+    }
+
+    // 渲染卡片
+    const grid = document.getElementById('portalGrid');
+    allPagesData.forEach(p => grid.appendChild(buildDirCard(p)));
+    lucide.createIcons();
+
+    // ── 滾動事件（回到頁首與黑暗模式位移） ──
+    (function() {
+        const backToTopBtn = document.getElementById('backToTop');
+        const darkModeBtn = document.getElementById('darkModeToggle');
+
+        window.addEventListener('scroll', function() {
+            const isScrolled = window.scrollY > 300;
+            backToTopBtn.classList.toggle('visible', isScrolled);
+            darkModeBtn.classList.toggle('shifted', isScrolled);
+        }, { passive: true });
+    })();
+</script>
+</body>
+</html>

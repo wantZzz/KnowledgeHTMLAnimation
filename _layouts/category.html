@@ -1,0 +1,703 @@
+---
+layout: null
+---
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page.title }}</title>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        /* ── CSS 變數定義（支援亮色與暗色模式切換） ── */
+        :root {
+            --bg-body: #eef0f3;
+            --bg-card: #ffffff;
+            --text-primary: #111111;
+            --text-secondary: #374151;
+            --text-muted: #6b7280;
+            --text-light: #9ca3af;
+            --border-color: #dde1e7;
+            --border-light: #eaecf0;
+            
+            --icon-header-bg: #e8f0fe;
+            --icon-header-color: #4a6cf7;
+            --icon-primary-bg: #e8f4fd;
+            --icon-primary-color: #2f87c8;
+            --icon-supp-bg: #eafaf1;
+            --icon-supp-color: #27ae60;
+            
+            --tag-primary-bg: #e8f4fd;
+            --tag-primary-color: #2f87c8;
+            --tag-primary-border: #c8e6f7;
+            
+            --tag-supp-bg: #eafaf1;
+            --tag-supp-color: #27ae60;
+            --tag-supp-border: #b8edcf;
+
+            --file-chip-bg: #f3f4f6;
+            --file-chip-border: #e5e7eb;
+            --sub-link-hover: #f8f9fb;
+            --shadow-sm: 0 2px 8px rgba(0,0,0,.10);
+            --focus-ring: #4a6cf7;
+        }
+
+        :root.dark {
+            --bg-body: #0f172a;
+            --bg-card: #1e293b;
+            --text-primary: #f8fafc;
+            --text-secondary: #cbd5e1;
+            --text-muted: #94a3b8;
+            --text-light: #64748b;
+            --border-color: #334155;
+            --border-light: #1e293b;
+            
+            --icon-header-bg: rgba(74, 108, 247, 0.15);
+            --icon-header-color: #708cfc;
+            --icon-primary-bg: rgba(47, 135, 200, 0.15);
+            --icon-primary-color: #58b0f0;
+            --icon-supp-bg: rgba(39, 174, 96, 0.15);
+            --icon-supp-color: #4cd984;
+            
+            --tag-primary-bg: rgba(47, 135, 200, 0.15);
+            --tag-primary-color: #58b0f0;
+            --tag-primary-border: rgba(47, 135, 200, 0.3);
+            
+            --tag-supp-bg: rgba(39, 174, 96, 0.15);
+            --tag-supp-color: #4cd984;
+            --tag-supp-border: rgba(39, 174, 96, 0.3);
+
+            --file-chip-bg: #1e293b;
+            --file-chip-border: #334155;
+            --sub-link-hover: #1e293b;
+            --shadow-sm: 0 4px 12px rgba(0,0,0,0.3);
+            --focus-ring: #6366f1;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        * { font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif; }
+        body { background: var(--bg-body); color: var(--text-primary); transition: background 0.3s, color 0.3s; }
+
+        .page-wrapper { max-width: 860px; margin: 0 auto; padding: 32px 20px 64px; }
+
+        /* ── Header 卡片 ── */
+        .header-card {
+            background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px;
+            padding: 20px 24px; margin-bottom: 14px;
+            display: flex; align-items: center; gap: 14px;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .header-icon {
+            width: 36px; height: 36px; background: var(--icon-header-bg); border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            color: var(--icon-header-color); flex-shrink: 0;
+            transition: background 0.3s, color 0.3s;
+        }
+        .header-title   { font-size: 17px; font-weight: 600; color: var(--text-primary); line-height: 1.3; }
+        .header-subtitle{ font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+
+        /* ── 主內容卡片 ── */
+        .content-card { 
+            background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; overflow: hidden; 
+            transition: background 0.3s, border-color 0.3s;
+        }
+
+        /* ── Tab 列 ── */
+        .tab-bar {
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid var(--border-light);
+            padding: 0 12px 0 4px; background: var(--bg-card);
+            transition: background 0.3s, border-color 0.3s;
+            flex-wrap: wrap; gap: 8px;
+        }
+        .tab-group { display: flex; gap: 2px; }
+        .tab-btn {
+            display: flex; align-items: center; gap: 6px;
+            padding: 12px 14px 11px; font-size: 13.5px; font-weight: 500;
+            color: var(--text-muted); border: none; background: none; cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: color .15s, border-color .15s;
+            white-space: nowrap; font-family: inherit;
+        }
+        .tab-btn:hover { color: var(--text-secondary); }
+        .tab-btn.active { color: var(--text-primary); border-bottom-color: #4a6cf7; font-weight: 600; }
+
+        /* 右側勾選框區塊樣式 */
+        .tab-control {
+            display: flex; align-items: center; gap: 6px;
+            user-select: none; cursor: pointer; font-size: 12.5px;
+            color: var(--text-muted); padding: 6px 0;
+            transition: color 0.2s;
+        }
+        .tab-control:hover { color: var(--text-secondary); }
+        
+        .custom-checkbox {
+            position: relative; width: 15px; height: 15px;
+            border: 1.5px solid var(--text-light); border-radius: 3px;
+            background: transparent; display: flex; align-items: center; justify-content: center;
+            transition: background 0.2s, border-color 0.2s;
+            flex-shrink: 0;
+        }
+        .tab-control input[type="checkbox"] {
+            position: absolute; opacity: 0; width: 0; height: 0;
+        }
+        .custom-checkbox::after {
+            content: ""; position: absolute; width: 4.5px; height: 8px;
+            border: solid white; border-width: 0 1.5px 1.5px 0;
+            transform: rotate(45deg) scale(0) translateY(-0.5px);
+            transition: transform 0.15s ease;
+        }
+        .tab-control input[type="checkbox"]:checked + .custom-checkbox {
+            background: #2563eb; border-color: #2563eb;
+        }
+        .tab-control input[type="checkbox"]:checked + .custom-checkbox::after {
+            transform: rotate(45deg) scale(1) translateY(-0.5px);
+        }
+        .tab-control input[type="checkbox"]:focus-visible + .custom-checkbox {
+            outline: 2px solid var(--focus-ring); outline-offset: 1px;
+        }
+
+        @media (max-width: 600px) {
+            .tab-bar { padding: 0 12px; }
+            .tab-group { width: 100%; border-bottom: 1px solid var(--border-light); }
+            .tab-control { width: 100%; justify-content: flex-end; padding-bottom: 10px; }
+        }
+		
+        /* ── 區塊標題列 ── */
+        .section-header {
+            display: flex; align-items: center; justify-content: space-between;
+            flex-wrap: wrap; gap: 8px;
+            padding: 13px 20px 11px; border-bottom: 1px solid var(--border-light);
+            transition: border-color 0.3s;
+        }
+        .section-title { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+        .section-right {
+            display: flex; align-items: center; gap: 8px;
+            flex-wrap: wrap; justify-content: flex-end;
+        }
+        .count-badge {
+            font-size: 11.5px; font-weight: 500; color: var(--text-muted);
+            background: var(--file-chip-bg); border: 1px solid var(--file-chip-border); border-radius: 20px; padding: 2px 9px;
+            white-space: nowrap;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .search-wrap { position: relative; }
+        .search-wrap svg {
+            position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+            color: var(--text-light); pointer-events: none;
+        }
+        .search-input {
+            width: 190px; padding: 5px 10px 5px 29px; font-size: 12.5px; font-family: inherit;
+            background: var(--file-chip-bg); border: 1px solid var(--file-chip-border); border-radius: 6px; color: var(--text-primary);
+            outline: none; transition: border-color .15s, background .15s, width .2s;
+        }
+        .search-input:focus { background: var(--bg-card); border-color: #93a5f5; width: 230px; }
+        /* 搜尋框：窄版佔整行 */
+        @media (max-width: 480px) {
+            .section-right { width: 100%; }
+            .search-wrap   { flex: 1; }
+            .search-input  { width: 100%; }
+            .search-input:focus { width: 100%; }
+        }
+
+        /* ── 1欄 Grid ── */
+        .item-grid { display: grid; grid-template-columns: 1fr; }
+
+        /* ── 每張卡片 ── */
+        .card-wrap { border-bottom: 1px solid var(--border-light); transition: border-color 0.3s; }
+        .card-wrap:last-child { border-bottom: none; }
+
+        .card-main {
+            display: flex; align-items: flex-start;
+            gap: 14px; padding: 18px 20px 0;
+        }
+
+        .item-icon-wrap {
+            width: 30px; height: 30px; border-radius: 7px;
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0; margin-top: 3px;
+            transition: background 0.3s, color 0.3s;
+        }
+        .icon-primary       { background: var(--icon-primary-bg); color: var(--icon-primary-color); }
+        .icon-supplementary { background: var(--icon-supp-bg); color: var(--icon-supp-color); }
+
+        .card-body { flex: 1; min-width: 0; padding-bottom: 16px; }
+
+        /* 標題列：標題 + 右側 meta，窄版 meta 換行 */
+        .card-title-row {
+            display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+        }
+        .card-title {
+            font-size: 15px; font-weight: 700; color: var(--text-primary);
+            display: flex; align-items: center; gap: 5px; line-height: 1.4;
+            text-decoration: none; flex-shrink: 1; min-width: 0;
+            word-break: break-word;
+            transition: color 0.15s;
+        }
+        .card-title svg { color: var(--text-light); flex-shrink: 0; transition: color 0.15s; }
+        .card-title:hover { color: #3b5bdb; }
+        .card-title:hover svg { color: #3b5bdb; }
+
+        /* 右側 meta：badge + chip，窄版時整個 meta 移到標題下方 */
+        .card-meta {
+            display: flex; align-items: center; gap: 5px;
+            flex-shrink: 0; padding-top: 2px;
+            flex-wrap: wrap;
+        }
+        .tag-badge {
+            font-size: 11px; font-weight: 500; padding: 3px 8px;
+            border-radius: 5px; white-space: nowrap;
+            transition: background 0.3s, color 0.3s, border-color 0.3s;
+        }
+        .tag-primary       { background: var(--tag-primary-bg); color: var(--tag-primary-color); border: 1px solid var(--tag-primary-border); }
+        .tag-supplementary { background: var(--tag-supp-bg); color: var(--tag-supp-color); border: 1px solid var(--tag-supp-border); }
+        
+		.tag-custom {
+            background: var(--file-chip-bg);
+            color: var(--text-secondary);
+            border: 1px solid var(--file-chip-border);
+        }
+
+        .file-chip {
+            font-size: 11px; color: var(--text-muted);
+            background: var(--file-chip-bg); border: 1px solid var(--file-chip-border); border-radius: 5px;
+            padding: 3px 7px; font-family: 'SF Mono', 'Consolas', monospace; white-space: nowrap;
+            transition: background 0.3s, border-color 0.3s;
+        }
+
+        /* 窄版：meta 換到標題下一行；badge 隱藏，chip 常駐 */
+        @media (max-width: 480px) {
+            .card-title-row  { flex-direction: column; gap: 5px; }
+            .card-meta       { padding-top: 0; }
+            .tag-badge       { display: none; }
+        }
+
+        .show-all-tags .tag-badge {
+            display: inline-block !important;
+        }
+		
+        /* 說明：允許換行，避免截斷 */
+        .card-desc {
+            font-size: 13px; color: var(--text-secondary);
+            margin-top: 6px; line-height: 1.65;
+            word-break: break-word; overflow-wrap: anywhere;
+        }
+
+        /* ── 子連結區 ── */
+        .sub-section { padding: 0 20px 16px 44px; }
+        @media (max-width: 480px) { .sub-section { padding-left: 20px; } }
+
+        .sub-section-label {
+            font-size: 11.5px; font-weight: 500; color: var(--text-light);
+            letter-spacing: 0.04em; margin-bottom: 8px; margin-top: 4px;
+        }
+        .sub-link-list {
+            border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden;
+            background: var(--bg-card);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        /* 子連結行：寬版橫排，窄版換行 */
+        .sub-link-row {
+            display: flex; align-items: center; justify-content: space-between;
+            flex-wrap: wrap; gap: 4px;
+            padding: 10px 14px; border-bottom: 1px solid var(--border-light);
+            text-decoration: none; color: var(--text-secondary); font-size: 13px;
+            transition: background .1s, border-color 0.3s;
+        }
+        .sub-link-row:last-child { border-bottom: none; }
+        .sub-link-row:hover { background: var(--sub-link-hover); }
+        .sub-link-left { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; }
+        .sub-link-left svg { color: var(--text-light); flex-shrink: 0; }
+        .sub-link-text { color: #2563eb; font-weight: 500; word-break: break-word; }
+        .sub-link-row:hover .sub-link-text { text-decoration: underline; }
+
+        /* 子連結 badge：role 類型，不再用 file-chip */
+        .sub-badge {
+            font-size: 11px; padding: 2px 8px; border-radius: 5px;
+            font-weight: 500; white-space: nowrap; flex-shrink: 0;
+            transition: background 0.3s, color 0.3s, border-color 0.3s;
+        }
+        .sub-badge.sub-primary       { background: var(--tag-primary-bg); color: var(--tag-primary-color); border: 1px solid var(--tag-primary-border); }
+        .sub-badge.sub-supplementary { background: var(--tag-supp-bg); color: var(--tag-supp-color); border: 1px solid var(--tag-supp-border); }
+
+        /* 窄版：badge 換行後佔整行；再更窄只顯示一個 */
+        @media (max-width: 480px) {
+            .sub-link-row  { flex-direction: column; align-items: flex-start; }
+            .sub-badge     { align-self: flex-start; }
+        }
+        @media (max-width: 360px) {
+            .sub-badge + .sub-badge { display: none; }
+        }
+
+        /* ── 無結果 ── */
+        #noResults { padding: 48px 20px; text-align: center; color: var(--text-light); display: none; }
+        #noResults p { font-size: 13px; margin-top: 8px; }
+
+        /* ── Footer ── */
+        .footer { text-align: center; margin-top: 24px; font-size: 12px; color: var(--text-muted); }
+        .footer a { color: var(--text-light); text-decoration: none; }
+        .footer a:hover { color: var(--text-secondary); }
+
+        /* ── Header：回上層按鈕 ── */
+        .header-card { justify-content: space-between; }
+        .header-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
+        .back-btn {
+            display: flex; align-items: center; gap: 5px;
+            padding: 6px 11px; border-radius: 7px;
+            font-size: 12.5px; font-weight: 500; color: var(--text-muted);
+            background: var(--file-chip-bg); border: 1px solid var(--file-chip-border);
+            text-decoration: none; white-space: nowrap; flex-shrink: 0;
+            transition: background .15s, color .15s, border-color .15s;
+        }
+        .back-btn svg { color: var(--text-light); transition: color .15s; }
+        .back-btn:hover { background: var(--sub-link-hover); color: #3b5bdb; border-color: #c5d2fb; }
+        .back-btn:hover svg { color: #3b5bdb; }
+
+        /* ── 懸浮按鈕核心配置 ── */
+        .floating-btn {
+            position: fixed; z-index: 999;
+            width: 44px; height: 44px; border-radius: 50%;
+            background: var(--bg-card); border: 1px solid var(--border-color);
+            box-shadow: var(--shadow-sm);
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; color: var(--text-muted);
+            transition: background .2s, color .2s, border-color .2s, transform .2s, bottom .2s, opacity .2s;
+        }
+        .floating-btn:hover { background: #2563eb; color: #ffffff; border-color: #2563eb; }
+
+        /* 回頁首懸浮按鈕 */
+        #backToTop {
+            bottom: 32px; right: 32px;
+            opacity: 0; pointer-events: none;
+            transform: translateY(8px);
+        }
+        #backToTop.visible { opacity: 1; pointer-events: auto; transform: translateY(0); }
+
+        /* 黑暗模式切換按鈕（預設置底，當回到頁首按鈕出現時會上移至 bottom: 88px） */
+        #darkModeToggle {
+            bottom: 32px; right: 32px;
+        }
+        #darkModeToggle.shifted {
+            bottom: 88px;
+        }
+    </style>
+</head>
+<body>
+<div class="page-wrapper">
+
+    <!-- Header 卡片 -->
+    <div class="header-card">
+        <div class="header-left">
+            <div class="header-icon">
+                <i data-lucide="layers" style="width:18px;height:18px;"></i>
+            </div>
+            <div>
+                <div class="header-title">{{ page.title }}</div>
+                <div class="header-subtitle">{{ page.description }}</div>
+            </div>
+        </div>
+        <a class="back-btn" href="{{ page.dir | split: "/" | pop | join: "/" | prepend: "/" | append: "/" | relative_url }}">
+            <i data-lucide="corner-left-up" style="width:13px;height:13px;"></i>
+            上一層
+        </a>
+    </div>
+
+    <!-- 主內容卡片 -->
+    <div class="content-card">
+
+        <!-- Tab 列 -->
+        <div class="tab-bar" id="mainTabs">
+			<div class="tab-group">
+                <button class="tab-btn active" data-tab="all">
+                    <i data-lucide="align-justify" style="width:14px;height:14px;"></i>所有內容
+                </button>
+                <button class="tab-btn" data-tab="primary">
+                    <i data-lucide="bookmark" style="width:14px;height:14px;"></i>主要內容
+                </button>
+                <button class="tab-btn" data-tab="supplementary">
+                    <i data-lucide="book-open" style="width:14px;height:14px;"></i>補充資料
+                </button>
+            </div>
+            <!-- 右側無視寬度顯示所有標籤控制 -->
+            <label class="tab-control" for="ignoreWidthCheck">
+                <input type="checkbox" id="ignoreWidthCheck" onchange="toggleIgnoreWidth(this.checked)">
+                <span class="custom-checkbox"></span>
+                <span>窄版顯示所有標籤</span>
+            </label>
+        </div>
+
+        <!-- 區塊標題 + 搜尋 -->
+        <div class="section-header">
+            <div class="section-title">
+                <i data-lucide="layers" style="width:13px;height:13px;"></i>
+                <span id="sectionTitle">所有內容總覽</span>
+            </div>
+            <div class="section-right">
+                <span class="count-badge" id="countBadge"></span>
+                <div class="search-wrap">
+                    <i data-lucide="search" style="width:13px;height:13px;"></i>
+                    <input class="search-input" id="searchInput" placeholder="搜尋…" type="text">
+                </div>
+            </div>
+        </div>
+
+        <!-- 1欄 Grid：由 JS 依據下方 allPagesData 動態渲染 -->
+        <div class="item-grid" id="itemGrid"></div>
+
+        <!-- 無結果提示 -->
+        <div id="noResults">
+            <i data-lucide="search-x" style="width:26px;height:26px;margin:0 auto 10px;display:block;color:var(--text-light);"></i>
+            <p>找不到符合的結果，請試試其他關鍵字。</p>
+        </div>
+
+    </div>
+
+    <!-- 回頁首按鈕 -->
+    <button id="backToTop" class="floating-btn" aria-label="回到頁首" onclick="window.scrollTo({top:0,behavior:'smooth'})">
+        <i data-lucide="chevron-up" style="width:18px;height:18px;"></i>
+    </button>
+
+    <!-- 黑暗模式切換按鈕（動態追蹤回到頁首狀態，並向上推移） -->
+    <button id="darkModeToggle" class="floating-btn" aria-label="切換黑暗模式" onclick="toggleDarkMode()">
+        <i id="themeIcon" data-lucide="moon" style="width:18px;height:18px;"></i>
+    </button>
+
+    <div class="footer">
+        <div>Copyright © {{ site.time | date: "%Y" }} XXX. All rights reserved. Hosted on GitHub Pages as a static website.</div>
+    </div>
+</div>
+
+<script>
+    // ── 黑暗模式控制器（支援 Cookie 存取） ──
+    const htmlEl = document.documentElement;
+    const themeIcon = document.getElementById('themeIcon');
+
+    // 寫入 Cookie 輔助函數 (設定為 365 天過期，path=/ 代表整站同網域皆可存取)
+    function setCookie(name, value, days) {
+        let expires = "";
+        if (days) {
+            const date = new Date();
+            date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+            expires = "; expires=" + date.toUTCString();
+        }
+        document.cookie = name + "=" + (value || "") + expires + "; path=/; SameSite=Lax";
+    }
+
+    // 讀取 Cookie 輔助函數
+    function getCookie(name) {
+        const nameEQ = name + "=";
+        const ca = document.cookie.split(';');
+        for (let i = 0; i < ca.length; i++) {
+            let c = ca[i];
+            while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+            if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+        }
+        return null;
+    }
+
+    // 載入時初始化主題（優先權：Cookie -> LocalStorage -> 系統預設偏好）
+    const savedTheme = getCookie('theme') || localStorage.getItem('theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    
+    if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
+        htmlEl.classList.add('dark');
+        themeIcon.setAttribute('data-lucide', 'sun');
+    } else {
+        htmlEl.classList.remove('dark');
+        themeIcon.setAttribute('data-lucide', 'moon');
+    }
+
+    function toggleDarkMode() {
+        const isDark = htmlEl.classList.toggle('dark');
+        const themeValue = isDark ? 'dark' : 'light';
+        
+        // 同步寫入 Cookie 與 LocalStorage
+        setCookie('theme', themeValue, 365);
+        localStorage.setItem('theme', themeValue);
+        
+        themeIcon.setAttribute('data-lucide', isDark ? 'sun' : 'moon');
+        lucide.createIcons();
+    }
+
+    // ── 無視寬度限制顯示所有標籤控制 ──
+    const checkboxEl = document.getElementById('ignoreWidthCheck');
+
+    // 讀取狀態（預設開啟 "true"，除非明確保留 "false"）
+    const savedIgnoreWidth = getCookie('ignore_width') || localStorage.getItem('ignore_width');
+    const defaultIgnoreWidth = (savedIgnoreWidth === null) ? true : (savedIgnoreWidth === 'true');
+
+    // 依據初始狀態套用
+    checkboxEl.checked = defaultIgnoreWidth;
+    toggleIgnoreWidth(defaultIgnoreWidth, false); // 第二參數 false 代表初始化不重複寫入記憶體
+
+    function toggleIgnoreWidth(isChecked, save = true) {
+        if (isChecked) {
+            htmlEl.classList.add('show-all-tags');
+        } else {
+            htmlEl.classList.remove('show-all-tags');
+        }
+
+        if (save) {
+            setCookie('ignore_width', isChecked ? 'true' : 'false', 365);
+            localStorage.setItem('ignore_width', isChecked ? 'true' : 'false');
+        }
+    }
+    // ── Liquid 注入資料 ──────────────────────────────────────────
+    const currentPageDir = {{ page.dir | jsonify }};
+    const siteBaseUrl    = {{ site.baseurl | default: "" | jsonify }};
+
+    // 建立 related 檔名 → 標題 / role 的對照表
+    const titleMap = {};
+    const roleMap  = {};
+    {% for p in site.pages %}
+        {% if p.dir == page.dir and p.url != page.url %}
+        titleMap[{{ p.name | jsonify }}] = {{ p.title | default: p.name | jsonify }};
+        roleMap[{{ p.name | jsonify }}]  = {{ p.role  | default: "primary" | jsonify }};
+        {% endif %}
+    {% endfor %}
+
+    const allPagesData = [];
+    {% for p in site.pages %}
+        {% if p.dir == page.dir and p.url != page.url %}
+        allPagesData.push({
+            name:        {{ p.name        | jsonify }},
+            url:         {{ p.url         | prepend: site.baseurl | jsonify }},
+            title:       {{ p.title       | default: p.name | jsonify }},
+            description: {{ p.description | default: "沒有描述" | jsonify }},
+            role:        {{ p.role        | default: "primary" | jsonify }},
+            related:     {% if p.related %}{{ p.related | jsonify }}{% else %}[]{% endif %},
+            tags:        {% if p.tags %}{{ p.tags | jsonify }}{% else %}[]{% endif %}
+        });
+        {% endif %}
+    {% endfor %}
+
+    // 按 title 排序
+    allPagesData.sort((a, b) => a.title.localeCompare(b.title, 'zh-Hant'));
+
+    // ── DOM 建構 ────────────────────────────────────────────────
+    const ROLE_CONFIG = {
+        primary:      { icon: 'bookmark',  label: '主要內容', iconClass: 'icon-primary',      badgeClass: 'tag-primary' },
+        supplementary:{ icon: 'book-open', label: '補充資料', iconClass: 'icon-supplementary', badgeClass: 'tag-supplementary' }
+    };
+
+    function esc(str) {
+        return String(str)
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+            .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function buildCard(p) {
+        const cfg      = ROLE_CONFIG[p.role] || ROLE_CONFIG.primary;
+        const filename = p.name;
+
+        const relatedHTML = p.related.length ? `
+            <div class="sub-section">
+                <div class="sub-section-label">相關資源</div>
+                <div class="sub-link-list">
+                    ${p.related.map(rel => {
+                        const relTitle = titleMap[rel]       || rel;
+                        const relRole  = roleMap[rel]        || 'primary';
+                        const relCfg   = ROLE_CONFIG[relRole] || ROLE_CONFIG.primary;
+                        const relUrl   = siteBaseUrl + currentPageDir + rel;
+                        return `<a href="${esc(relUrl)}" class="sub-link-row">
+                            <span class="sub-link-left">
+                                <i data-lucide="file-text" style="width:14px;height:14px;"></i>
+                                <span class="sub-link-text">${esc(relTitle)}</span>
+                            </span>
+                            <span class="sub-badge sub-${relRole}">${relCfg.label}</span>
+                        </a>`;
+                    }).join('')}
+                </div>
+            </div>` : '';
+
+        const rawDesc = p.description ? p.description.trim() : '';
+        const descText = rawDesc !== '' ? rawDesc : '沒有描述';
+        const descHTML = `<div class="card-desc">${esc(descText)}</div>`;
+
+        const tagsHTML = (p.tags && p.tags.length) ? p.tags.map(tag => {
+            return `<span class="tag-badge tag-custom">${esc(tag)}</span>`;
+        }).join('') : '';
+        const wrap = document.createElement('div');
+        wrap.className = 'card-wrap';
+        wrap.dataset.tab   = p.role || 'primary';
+        wrap.dataset.title = p.title.toLowerCase();
+        wrap.innerHTML = `
+            <div class="card-main">
+                <div class="item-icon-wrap ${cfg.iconClass}">
+                    <i data-lucide="${cfg.icon}" style="width:15px;height:15px;"></i>
+                </div>
+                <div class="card-body">
+                    <div class="card-title-row">
+                        <a class="card-title" href="${esc(p.url)}">
+                            ${esc(p.title)}
+                            <i data-lucide="arrow-up-right" style="width:14px;height:14px;"></i>
+                        </a>
+                        <div class="card-meta">
+                            <span class="tag-badge ${cfg.badgeClass}">${cfg.label}</span>
+                            <span class="file-chip">${esc(filename)}</span>
+                        </div>
+                    </div>
+                    ${descHTML}
+                </div>
+            </div>
+            ${relatedHTML}`;
+        return wrap;
+    }
+
+    const grid = document.getElementById('itemGrid');
+    allPagesData.forEach(p => grid.appendChild(buildCard(p)));
+    lucide.createIcons();
+
+    // ── Tab / 搜尋邏輯 ───────────────────────────────────────────
+    const noRes    = document.getElementById('noResults');
+    const cntBadge = document.getElementById('countBadge');
+    const secTitle = document.getElementById('sectionTitle');
+    const tabLabels = { all: '所有內容總覽', primary: '主要內容總覽', supplementary: '補充資料總覽' };
+    let currentTab = 'all', searchQ = '';
+
+    function run() {
+        const cards = Array.from(document.querySelectorAll('.card-wrap'));
+        let visible = 0;
+        cards.forEach(card => {
+            const matchTab = currentTab === 'all' || card.dataset.tab === currentTab;
+            const matchQ   = card.dataset.title.includes(searchQ);
+            card.style.display = (matchTab && matchQ) ? '' : 'none';
+            if (matchTab && matchQ) visible++;
+        });
+        noRes.style.display = visible === 0 ? 'block' : 'none';
+        cntBadge.textContent = visible + ' 筆項目';
+        secTitle.textContent = tabLabels[currentTab];
+    }
+
+    document.getElementById('mainTabs').addEventListener('click', e => {
+        const btn = e.target.closest('.tab-btn');
+        if (!btn) return;
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentTab = btn.dataset.tab;
+        run();
+    });
+
+    document.getElementById('searchInput').addEventListener('input', e => {
+        searchQ = e.target.value.toLowerCase().trim();
+        run();
+    });
+
+    run();
+
+    // ── 滾動事件（回到頁首與黑暗模式按鈕位移） ──
+    (function() {
+        const backToTopBtn = document.getElementById('backToTop');
+        const darkModeBtn = document.getElementById('darkModeToggle');
+
+        window.addEventListener('scroll', function() {
+            const isScrolled = window.scrollY > 240;
+            backToTopBtn.classList.toggle('visible', isScrolled);
+            darkModeBtn.classList.toggle('shifted', isScrolled);
+        }, { passive: true });
+    })();
+</script>
+</body>
+</html>
