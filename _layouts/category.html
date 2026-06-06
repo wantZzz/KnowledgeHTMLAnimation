@@ -1,18 +1,26 @@
 ---
 layout: null
 ---
+{% assign dir_parts = page.dir | split: "/" %}
+{% assign dir_last = dir_parts | last %}
+{% if dir_last == nil or dir_last == "" %}
+  {% assign current_dir_name = site.github.repository_name %}
+{% else %}
+  {% assign current_dir_name = dir_last %}
+{% endif %}
+{% assign page_title = page.title | default: current_dir_name %}
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ page.title }}</title>
+    <title>{{ page_title }} - {{ site.github.repository_name }}</title>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600&display=swap" rel="stylesheet">
 	<meta property="og:site_name" content="{{ site.github.repository_nwo }} - github.io" />
 	<meta property="og:type" content="website" />
-	<meta property="og:title" content="{{ page.title }} - {{ site.github.repository_name }}" />
+	<meta property="og:title" content="{{ page_title }} - {{ site.github.repository_name }}" />
 	<meta property="og:description" content="{{ page.description | default: site.description | strip_html | strip_newlines | truncate: 160 }}" />
 	<meta property="og:url" content="{{ page.url | absolute_url }}" />
 	<meta property="og:image" content="https://github.com/{{ site.github.owner_name }}.png?size=630" />
@@ -400,7 +408,7 @@ layout: null
                 <i data-lucide="layers" style="width:18px;height:18px;"></i>
             </div>
             <div>
-                <div class="header-title">{{ page.title }}</div>
+                <div class="header-title">{{ page_title }}</div>
                 <div class="header-subtitle">{{ page.description }}</div>
             </div>
         </div>
