@@ -3,7 +3,7 @@ layout: null
 title: "[Chapter 2.4] 預測/非預測分析"
 description: "模擬預測/非預測分析兩種狀態下語法樹的建構過程"
 role: "primary"
-related: []
+related: ["Left_vs_Right_Recursion.html"]
 tags: ["移動端友善"]
 ---
 <!DOCTYPE html>
@@ -224,7 +224,7 @@ tags: ["移動端友善"]
                         edges: []
                     },
                     {
-                        desc: "<b>步驟 2 - 根節點展開：</b>分析器預看符號為 <code>id</code>。根據<b>預測分析法（Predictive Parsing）</b>，由於 <code>id</code> 屬於第一條產生式的 <b>FIRST 集合</b>（即 $\\text{FIRST}(T\\ E') = \\{\\text{id}\\}$），分析器在不需回溯的情況下，唯一決定套用規則 <code>E → T E'</code>。",
+                        desc: "<b>步驟 2 - 根節點展開：</b>分析器預看符號為 <code>id</code>。根據<b>預測分析法（Predictive Parsing）</b>，由於 <code>id</code> 屬於第一條產生式的 <b>FIRST 集合</b>（即 FIRST(id) = {id}），分析器在不需回溯的情況下，唯一決定套用規則 <code>E → T E'</code>。",
                         lookaheadIdx: 0,
                         lookaheadText: "id",
                         triggeredRule: "E → T E'",
@@ -242,7 +242,7 @@ tags: ["移動端友善"]
                         ]
                     },
                     {
-                        desc: "<b>步驟 3 - 展開最左非終端符號：</b>分析器聚焦在最左側的非終端符號 <code>T</code>（符合<b>最左推導 leftmost derivation</b> 定義）。此時預看符號仍為 <code>id</code>。由於 $\\text{FIRST}(\\text{id}) = \\{\\text{id}\\}$，分析器決定套用產生式 <code>T → id</code>。",
+                        desc: "<b>步驟 3 - 展開最左非終端符號：</b>分析器聚焦在最左側的非終端符號 <code>T</code>（符合<b>最左推導 leftmost derivation</b> 定義）。此時預看符號仍為 <code>id</code>。由於 FIRST(id) = {id}，分析器決定套用產生式 <code>T → id</code>。",
                         lookaheadIdx: 0,
                         lookaheadText: "id",
                         triggeredRule: "T → id",
@@ -282,7 +282,7 @@ tags: ["移動端友善"]
                         ]
                     },
                     {
-                        desc: "<b>步驟 5 - 展開加法餘項：</b>當前聚焦的非終端符號為 <code>E'</code>，此時預看符號為 <code>+</code>。由於 <code>+</code> 屬於第一條右遞迴候選規則的 FIRST 集合（即 $\\text{FIRST}(+ T\\ E') = \\{\\text{+}\\}$），分析器套用規則 <code>E' → + T E'</code>，向下建立加法分支。",
+                        desc: "<b>步驟 5 - 展開加法餘項：</b>當前聚焦的非終端符號為 <code>E'</code>，此時預看符號為 <code>+</code>。由於 <code>+</code> 屬於第一條右遞迴候選規則的 FIRST 集合（即 FIRST(+ T E') = {+}），分析器套用規則 <code>E' → + T E'</code>，向下建立加法分支。",
                         lookaheadIdx: 1,
                         lookaheadText: "+",
                         triggeredRule: "E' → + T E'",
@@ -353,7 +353,7 @@ tags: ["移動端友善"]
                         ]
                     },
                     {
-                        desc: "<b>步驟 8 - 套用空字串消去規則：</b>此時堆疊頂端為非終端符號 <code>E'</code>，而預看符號為結束符號 <code>EOF</code>。由於 <code>EOF</code> 不屬於任何非空產生式，分析器選擇其<b>預設路徑（Default Path）</b>，套用 <b>$\\epsilon$-產生式</b> <code>E' → ε</code> 將其從樹中消去。",
+                        desc: "<b>步驟 8 - 套用空字串消去規則：</b>此時堆疊頂端為非終端符號 <code>E'</code>，而預看符號為結束符號 <code>EOF</code>。由於 <code>EOF</code> 不屬於任何非空產生式，分析器選擇其<b>預設路徑（Default Path）</b>，套用 <b>ε-產生式</b> <code>E' → ε</code> 將其從樹中消去。",
                         lookaheadIdx: 4,
                         lookaheadText: "EOF",
                         triggeredRule: "E' → ε",

@@ -1,0 +1,891 @@
+---
+layout: null
+title: "[Chapter 3.8] 聯合 NFA 最長匹配與回溯"
+description: "保留字與識別字詞彙辨識的進階，模擬存在彼此衝突的規則時以的匹配與判斷"
+role: "primary"
+related: []
+tags: ["移動端友善"]
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>聯合 NFA 最長匹配與回溯模擬器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 平滑變更色彩與邊框，不含任何縮放 */
+        .state-circle {
+            transition: fill 0.4s cubic-bezier(0.4, 0, 0.2, 1), 
+                        stroke 0.4s cubic-bezier(0.4, 0, 0.2, 1), 
+                        stroke-width 0.3s ease;
+        }
+        
+        /* 活躍狀態 NFA 平面高亮 */
+        .active-nfa-state {
+            fill: #fee2e2 !important;
+            stroke: #ef4444 !important;
+            stroke-width: 3px !important;
+            filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.2));
+        }
+
+        /* 接受狀態特有外觀 */
+        .accept-state {
+            stroke-dasharray: none;
+        }
+
+        /* 轉移邊高亮 */
+        .edge-path {
+            transition: stroke 0.4s ease, stroke-width 0.4s ease;
+        }
+        .edge-active {
+            stroke: #ef4444 !important;
+            stroke-width: 3px !important;
+        }
+
+        /* 平面粒子移轉動畫 (不含縮放) */
+        .tracer {
+            transition: cx 0.5s cubic-bezier(0.4, 0, 0.2, 1), 
+                        cy 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+                        opacity 0.3s ease;
+        }
+
+        .stream-char {
+            transition: all 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col">
+
+    <!-- 頁首 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6 sticky top-0 z-10">
+        <div class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+                <h1 class="text-xl font-bold text-slate-900">聯合 NFA 最長匹配與回溯模擬器</h1>
+                <p class="text-xs text-slate-500 mt-1">展示詞彙分析產生器在處理多重規則時，如何合併自動機並進行 Lookahead 與回溯 (Backtracking) 決策。</p>
+            </div>
+            <span class="text-xs bg-slate-100 text-slate-600 px-3 py-1 rounded font-mono border border-slate-200">Chapter 3.8 Design of Generator</span>
+        </div>
+    </header>
+
+    <main class="flex-grow max-w-6xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        <!-- 左側：控制、串流與聯合 NFA 拓撲區 (8格) -->
+        <div class="lg:col-span-8 flex flex-col gap-6">
+            
+            <!-- 互動控制面板 (主互動元素) -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                <div class="md:col-span-6">
+                    <label class="block text-xs font-semibold text-slate-500 mb-1">選擇測試輸入字串：</label>
+                    <select id="input-selector" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 focus:outline-none focus:border-indigo-500 font-mono" onchange="handleInputChange()">
+                        <option value="aaba">"aaba" (示範最長匹配於第3步，並於第4步回溯)</option>
+                        <option value="abb">"abb" (一路預讀，最終完美匹配 p2: abb)</option>
+                        <option value="a ">"a " (第1步即命中 p1，隨後遭遇空格完成匹配)</option>
+                    </select>
+                </div>
+                
+                <div class="md:col-span-6 flex items-end justify-end gap-2 h-full pt-4 md:pt-0">
+                    <button id="btn-step" class="w-full md:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-medium text-xs rounded-lg shadow-sm transition-colors flex items-center justify-center gap-1.5" onclick="stepForward()">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/>
+                        </svg>
+                        下一步 (Step Forward)
+                    </button>
+                    <button class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-xs rounded-lg border border-slate-200 transition-colors" onclick="resetSimulation()">
+                        重置
+                    </button>
+                </div>
+            </div>
+
+            <!-- 輸入緩衝字元串流展示 -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider">輸入字元緩衝區 (Input Buffer)</h3>
+                    <div class="flex gap-4 text-[10px] text-slate-400 font-medium">
+                        <span class="flex items-center gap-1">
+                            <span class="w-2.5 h-2.5 bg-emerald-500 rounded-sm"></span> lexemeBegin
+                        </span>
+                        <span class="flex items-center gap-1">
+                            <span class="w-2.5 h-2.5 bg-red-500 rounded-sm"></span> forward 指標 (Lookahead)
+                        </span>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 relative py-3 bg-slate-50 rounded-lg border border-slate-150 justify-center" id="stream-container">
+                    <!-- 由 JS 動態繪製字元格與指標 -->
+                </div>
+            </div>
+
+            <!-- 聯合 NFA (Combined NFA) 狀態圖 -->
+            <div class="bg-white rounded-xl p-6 border border-slate-200 shadow-sm flex flex-col gap-3">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <h3 class="text-sm font-bold text-slate-800">聯合非決定性有限自動機 (Combined NFA)</h3>
+                        <p class="text-xs text-slate-400 font-mono">p1: a (S2), p2: abb (S6), p3: a*b+ (S8)</p>
+                    </div>
+                    <span class="px-2 py-0.5 bg-slate-100 text-slate-600 rounded font-mono text-[10px] border border-slate-200">Combined NFA</span>
+                </div>
+
+                <!-- SVG 拓撲畫布 -->
+                <div class="relative w-full overflow-x-auto bg-slate-50 rounded-lg border border-slate-150 p-2">
+                    <svg class="w-full min-w-[650px]" height="220" viewBox="0 0 650 220" id="combined-nfa-svg">
+                        <!-- 連線定義 -->
+                        <g id="svg-edges-group">
+                            <!-- 0 -> 1, 3, 7 (ε) -->
+                            <path d="M 68 110 Q 110 70 152 48" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="edge-0-1" class="edge-path" />
+                            <text x="110" y="65" class="text-[9px] fill-slate-400 font-mono">ε</text>
+                            
+                            <line x1="68" y1="110" x2="152" y2="110" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="edge-0-3" class="edge-path" />
+                            <text x="110" y="102" class="text-[9px] fill-slate-400 font-mono">ε</text>
+                            
+                            <path d="M 68 110 Q 110 150 152 172" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="edge-0-7" class="edge-path" />
+                            <text x="110" y="152" class="text-[9px] fill-slate-400 font-mono">ε</text>
+
+                            <!-- p1: 1 -> 2 (a) -->
+                            <line x1="188" y1="40" x2="272" y2="40" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="edge-1-2" class="edge-path" />
+                            <text x="230" y="32" class="text-[10px] fill-slate-500 font-mono font-bold">a</text>
+
+                            <!-- p2: 3 -> 4 (a) -->
+                            <line x1="188" y1="110" x2="272" y2="110" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="edge-3-4" class="edge-path" />
+                            <text x="230" y="102" class="text-[10px] fill-slate-500 font-mono font-bold">a</text>
+                            
+                            <!-- p2: 4 -> 5 (b) -->
+                            <line x1="308" y1="110" x2="392" y2="110" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="edge-4-5" class="edge-path" />
+                            <text x="350" y="102" class="text-[10px] fill-slate-500 font-mono font-bold">b</text>
+
+                            <!-- p2: 5 -> 6 (b) -->
+                            <line x1="428" y1="110" x2="512" y2="110" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="edge-5-6" class="edge-path" />
+                            <text x="470" y="102" class="text-[10px] fill-slate-500 font-mono font-bold">b</text>
+
+                            <!-- p3: 7 -> 7 self-loop 'a' -->
+                            <path d="M 160 162 C 130 122, 210 122, 180 162" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="edge-7-7" class="edge-path" />
+                            <text x="170" y="118" class="text-[9px] fill-slate-400 font-mono">a</text>
+
+                            <!-- p3: 7 -> 8 (b) -->
+                            <line x1="188" y1="180" x2="332" y2="180" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="edge-7-8" class="edge-path" />
+                            <text x="260" y="172" class="text-[10px] fill-slate-500 font-mono font-bold">b</text>
+
+                            <!-- p3: 8 -> 8 self-loop 'b' -->
+                            <path d="M 340 162 C 310 122, 390 122, 360 162" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="edge-8-8" class="edge-path" />
+                            <text x="350" y="118" class="text-[9px] fill-slate-400 font-mono">b</text>
+                        </g>
+
+                        <!-- 節點定義 -->
+                        <g id="svg-nodes-group">
+                            <!-- S0 -->
+                            <g id="node-0">
+                                <circle cx="50" cy="110" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle" />
+                                <text x="50" y="114" text-anchor="middle" class="text-xs font-bold fill-slate-700">0</text>
+                            </g>
+
+                            <!-- Pattern 1 Branch -->
+                            <g id="node-1">
+                                <circle cx="170" cy="40" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle" />
+                                <text x="170" y="44" text-anchor="middle" class="text-xs font-bold fill-slate-700">1</text>
+                            </g>
+                            <g id="node-2">
+                                <circle cx="290" cy="40" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle accept-state" />
+                                <circle cx="290" cy="40" r="14" fill="none" stroke="#475569" stroke-width="1.5" />
+                                <text x="290" y="44" text-anchor="middle" class="text-xs font-bold fill-slate-700">2</text>
+                                <text x="290" y="15" text-anchor="middle" class="text-[9px] fill-emerald-600 font-sans font-semibold">Match p1</text>
+                            </g>
+
+                            <!-- Pattern 2 Branch -->
+                            <g id="node-3">
+                                <circle cx="170" cy="110" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle" />
+                                <text x="170" y="114" text-anchor="middle" class="text-xs font-bold fill-slate-700">3</text>
+                            </g>
+                            <g id="node-4">
+                                <circle cx="290" cy="110" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle" />
+                                <text x="290" y="114" text-anchor="middle" class="text-xs font-bold fill-slate-700">4</text>
+                            </g>
+                            <g id="node-5">
+                                <circle cx="410" cy="110" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle" />
+                                <text x="410" y="114" text-anchor="middle" class="text-xs font-bold fill-slate-700">5</text>
+                            </g>
+                            <g id="node-6">
+                                <circle cx="530" cy="110" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle accept-state" />
+                                <circle cx="530" cy="110" r="14" fill="none" stroke="#475569" stroke-width="1.5" />
+                                <text x="530" y="114" text-anchor="middle" class="text-xs font-bold fill-slate-700">6</text>
+                                <text x="530" y="85" text-anchor="middle" class="text-[9px] fill-emerald-600 font-sans font-semibold">Match p2</text>
+                            </g>
+
+                            <!-- Pattern 3 Branch -->
+                            <g id="node-7">
+                                <circle cx="170" cy="180" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle" />
+                                <text x="170" y="184" text-anchor="middle" class="text-xs font-bold fill-slate-700">7</text>
+                            </g>
+                            <g id="node-8">
+                                <circle cx="350" cy="180" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle accept-state" />
+                                <circle cx="350" cy="180" r="14" fill="none" stroke="#475569" stroke-width="1.5" />
+                                <text x="350" y="184" text-anchor="middle" class="text-xs font-bold fill-slate-700">8</text>
+                                <text x="350" y="155" text-anchor="middle" class="text-[9px] fill-emerald-600 font-sans font-semibold">Match p3</text>
+                            </g>
+                        </g>
+
+                        <!-- 動態追蹤粒子 -->
+                        <circle id="action-tracer" cx="-50" cy="-50" r="5" fill="#f87171" class="tracer" opacity="0" />
+                    </svg>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- 右側：變數狀態、單行轉移矩陣與步驟技術解析 (4格) -->
+        <div class="lg:col-span-4 flex flex-col gap-6 font-sans">
+            
+            <!-- 執行期關鍵變數與查表矩陣 -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex flex-col gap-4">
+                <h2 class="text-sm font-bold text-slate-900 border-b border-slate-100 pb-2">最長匹配核心變數</h2>
+                
+                <!-- 變數狀態組 -->
+                <div class="grid grid-cols-2 gap-2 text-center text-[11px]">
+                    <div class="bg-slate-50 p-2 rounded-lg border border-slate-150">
+                        <span class="text-[9px] text-slate-400 block font-semibold">活躍狀態集 (S)</span>
+                        <span id="panel-state-set" class="text-xs font-mono font-bold text-indigo-600">-</span>
+                    </div>
+                    <div class="bg-slate-50 p-2 rounded-lg border border-slate-150">
+                        <span class="text-[9px] text-slate-400 block font-semibold">預讀字元 (Char)</span>
+                        <span id="panel-lookahead" class="text-xs font-mono font-bold text-slate-800">-</span>
+                    </div>
+                </div>
+
+                <!-- 歷史接受記錄暫存器 (關鍵回溯憑據) -->
+                <div class="p-3 bg-emerald-50/50 rounded-lg border border-emerald-100 space-y-1.5 text-xs text-emerald-800">
+                    <span class="text-[9px] font-bold text-emerald-600 block uppercase tracking-wider">最近一次匹配成功記錄 (Last Seen Match)</span>
+                    <div class="grid grid-cols-3 gap-1 font-mono text-[10px]">
+                        <div>位置: <span id="reg-index" class="font-bold">-</span></div>
+                        <div>字串: <span id="reg-lexeme" class="font-bold">-</span></div>
+                        <div>規則: <span id="reg-pattern" class="font-bold">-</span></div>
+                    </div>
+                </div>
+
+                <!-- 單行轉移矩陣查表 -->
+                <div class="border-t border-slate-100 pt-3">
+                    <span class="text-[10px] font-bold text-slate-500 block mb-1.5">聯合 NFA 轉移查表 (Combined Transition Table)</span>
+                    <table class="w-full text-[10px] text-center border border-slate-200 rounded overflow-hidden">
+                        <thead class="bg-slate-50 border-b border-slate-200">
+                            <tr>
+                                <th class="p-1 border-r border-slate-200 font-semibold text-slate-600">當前集合 (S)</th>
+                                <th class="p-1 border-r border-slate-200 font-semibold text-slate-600">讀入 'a'</th>
+                                <th class="p-1 font-semibold text-slate-600">讀入 'b'</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="bg-white font-mono">
+                                <td id="tbl-curr" class="p-1.5 border-r border-slate-200 text-slate-700 font-semibold">-</td>
+                                <td id="tbl-a" class="p-1.5 border-r border-slate-200 text-slate-500">-</td>
+                                <td id="tbl-b" class="p-1.5 text-slate-500">-</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 剖析步驟與技術解析 (改自原日誌) -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex-grow flex flex-col min-h-[250px]">
+                <h2 class="text-sm font-bold text-slate-900 border-b border-slate-100 pb-2">剖析步驟與技術解析</h2>
+                <div id="log-container" class="flex-grow overflow-y-auto text-[11px] space-y-3 mt-3 font-mono max-h-[280px] pr-1">
+                    <div class="text-slate-400 italic">等待執行步進程序...</div>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- 頁尾說明 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500 mt-auto">
+        <div class="max-w-6xl mx-auto">
+             編譯器設計課程教材輔助軟體 - 聯合 NFA 最長匹配與回溯模擬
+        </div>
+    </footer>
+
+    <!-- 箭頭與節點 SVG 標記 -->
+    <svg class="absolute w-0 h-0" width="0" height="0">
+        <defs>
+            <marker id="arrow-nfa" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#94a3b8" />
+            </marker>
+            <marker id="arrow-nfa-active" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#ef4444" />
+            </marker>
+        </defs>
+    </svg>
+
+    <script>
+        // 核心狀態變數
+        let currentString = "aaba";
+        let stepIndex = 0;
+        let lexemeBegin = 0;
+        let forward = 0;
+
+        // 歷史備份 (用於回溯成功時復原)
+        let lastAcceptingIndex = -1;
+        let lastAcceptingLexeme = "-";
+        let lastAcceptingPattern = "-";
+
+        let tracerTimeout;
+
+        // 節點座標映射 (供 tracer 使用)
+        const nodeCoords = {
+            0: { x: 50, y: 110 },
+            1: { x: 170, y: 40 },
+            2: { x: 290, y: 40 },
+            3: { x: 170, y: 110 },
+            4: { x: 290, y: 110 },
+            5: { x: 410, y: 110 },
+            6: { x: 530, y: 110 },
+            7: { x: 170, y: 180 },
+            8: { x: 350, y: 180 }
+        };
+
+        // 聯合 NFA 的靜態狀態子集轉移矩陣定義
+        const transitionMatrix = {
+            "{0, 1, 3, 7}": { a: "{2, 4, 7}", b: "∅" },
+            "{2, 4, 7}": { a: "{7}", b: "{5, 8}" },
+            "{7}": { a: "{7}", b: "{8}" },
+            "{8}": { a: "∅", b: "{8}" },
+            "{5, 8}": { a: "∅", b: "{6, 8}" },
+            "{6, 8}": { a: "∅", b: "{8}" },
+            "∅": { a: "∅", b: "∅" }
+        };
+
+        // 步驟情境定義集 (100% 擬真投影片 3.8.2 的模擬軌跡)
+        const scenarios = {
+            "aaba": [
+                {
+                    header: "初始化狀態 (ε-closure)",
+                    char: "-",
+                    lexemeBegin: 0,
+                    forward: 0,
+                    activeStates: [0, 1, 3, 7],
+                    desc: "自動機自起始狀態 0 開始。計算 ε-closure(0) 得到初始活躍狀態集合 {0, 1, 3, 7}。此集合不包含任何接受狀態。",
+                    tracer: null,
+                    edgeActive: null,
+                    tests: [
+                        "目前 forward = 0, lexemeBegin = 0",
+                        "初始化活躍狀態集合：{0, 1, 3, 7}",
+                        "判定：無符合之接受狀態，繼續向後掃描"
+                    ]
+                },
+                {
+                    header: "讀入第一個字元 'a'",
+                    char: "a",
+                    lexemeBegin: 0,
+                    forward: 1,
+                    activeStates: [2, 4, 7],
+                    desc: "前移指標 forward 向右推移一格。讀入字元 'a'。狀態 1 轉移至 2；狀態 3 轉移至 4；狀態 7 轉移至自身。計算得出活躍集合 {2, 4, 7}。",
+                    tracer: { from: 1, to: 2 },
+                    edgeActive: "edge-1-2",
+                    isAcceptingStep: true,
+                    patternMatched: "p1 (a)",
+                    tests: [
+                        "移轉路徑：0 → 1 → 2 以及 0 → 3 → 4 以及 0 → 7 → 7",
+                        "計算：move({0, 1, 3, 7}, a) = {2, 4, 7}",
+                        "判定：狀態 2 為模式 p1 的接受狀態。更新最近一次匹配成功暫存器 (Index: 1, 辭素: 'a', 模式: p1)"
+                    ]
+                },
+                {
+                    header: "讀入第二個字元 'a' (預讀最長匹配)",
+                    char: "a",
+                    lexemeBegin: 0,
+                    forward: 2,
+                    activeStates: [7],
+                    desc: "雖然上一步已符合 p1，但為遵守最長匹配原則，forward 指標繼續向右預讀。輸入字元 'a'。狀態 2 與 4 無有效移轉；僅狀態 7 自我循環至 7。活躍集合收縮至 {7}。",
+                    tracer: { from: 7, to: 7 },
+                    edgeActive: "edge-7-7",
+                    isAcceptingStep: false,
+                    tests: [
+                        "移轉路徑：狀態 2、4 無 a 轉移；狀態 7 自我轉移",
+                        "計算：move({2, 4, 7}, a) = {7}",
+                        "判定：非接受狀態。最近一次匹配成功暫存器保持不變 (位置 1)"
+                    ]
+                },
+                {
+                    header: "讀入第三個字元 'b' (預讀最長匹配)",
+                    char: "b",
+                    lexemeBegin: 0,
+                    forward: 3,
+                    activeStates: [8],
+                    desc: "forward 指標繼續向右預讀。輸入字元 'b'。狀態 7 經由 'b' 轉移至 8。活躍集合更新為 {8}。狀態 8 為模式 p3 (a*b+) 的接受狀態。",
+                    tracer: { from: 7, to: 8 },
+                    edgeActive: "edge-7-8",
+                    isAcceptingStep: true,
+                    patternMatched: "p3 (a*b+)",
+                    tests: [
+                        "移轉路徑：7 → 8 (消耗字元 'b')",
+                        "計算：move({7}, b) = {8}",
+                        "判定：狀態 8 為 p3 的接受狀態。更新最近一次匹配成功暫存器 (Index: 3, 辭素: 'aab', 模式: p3)"
+                    ]
+                },
+                {
+                    header: "讀入第四個字元 'a' (發生衝突 dead-end)",
+                    char: "a",
+                    lexemeBegin: 0,
+                    forward: 4,
+                    activeStates: [],
+                    desc: "forward 繼續預讀最後字元 'a'。狀態 8 遭遇 'a' 無任何合法轉移邊。活躍狀態集收縮為空集合 ∅。這代表最長匹配掃描在此處被迫終止。",
+                    tracer: null,
+                    edgeActive: null,
+                    isAcceptingStep: false,
+                    tests: [
+                        "移轉路徑：狀態 8 無 a 移轉邊",
+                        "計算：move({8}, a) = ∅ (空集合)",
+                        "判定：活躍狀態集為空，無法繼續前行。即刻啟動回溯機制"
+                    ]
+                },
+                {
+                    header: "觸發回溯機制 (Backtracking)",
+                    char: "-",
+                    lexemeBegin: 3, // 回溯後更新 lexemeBegin 到匹配結束位置
+                    forward: 3,     // 指標向左退回最近一次接受點
+                    activeStates: [8],
+                    desc: "因狀態機走入死路，分析器從備份暫存器中提取最近一次成功匹配的記錄 (Index: 3)。將前移指標 forward 向左退回至 3。成功切斷並辨識出辭素 'aab'。",
+                    tracer: { from: 4, to: 8 },
+                    edgeActive: null,
+                    isBacktrackStep: true,
+                    tests: [
+                        "動作：forward 指標由 4 向左回退至 3",
+                        "匹配結果：成功匹配模式 p3，確認與產出辭素：'aab'",
+                        "指標重置：lexemeBegin 推進至 3，準備從剩餘字串 'a' 開始下一次詞彙分析"
+                    ]
+                }
+            ],
+            "abb": [
+                {
+                    header: "初始化狀態 (ε-closure)",
+                    char: "-",
+                    lexemeBegin: 0,
+                    forward: 0,
+                    activeStates: [0, 1, 3, 7],
+                    desc: "自動機自起始狀態 0 開始。計算 ε-closure(0) 得到初始活躍狀態集合 {0, 1, 3, 7}。",
+                    tracer: null,
+                    edgeActive: null,
+                    tests: [
+                        "初始化活躍狀態集合：{0, 1, 3, 7}",
+                        "判定：繼續向後掃描"
+                    ]
+                },
+                {
+                    header: "讀入第一個字元 'a'",
+                    char: "a",
+                    lexemeBegin: 0,
+                    forward: 1,
+                    activeStates: [2, 4, 7],
+                    desc: "前移指標 forward 向右推移。讀入字元 'a'。計算得出活躍集合 {2, 4, 7}。狀態 2 為 p1 (a) 的接受狀態。",
+                    tracer: { from: 1, to: 2 },
+                    edgeActive: "edge-1-2",
+                    isAcceptingStep: true,
+                    patternMatched: "p1 (a)",
+                    tests: [
+                        "計算：move({0, 1, 3, 7}, a) = {2, 4, 7}",
+                        "判定：更新匹配暫存器 (Index: 1, 辭素: 'a', 模式: p1)"
+                    ]
+                },
+                {
+                    header: "讀入第二個字元 'b'",
+                    char: "b",
+                    lexemeBegin: 0,
+                    forward: 2,
+                    activeStates: [5, 8],
+                    desc: "繼續預讀字元 'b'。狀態 4 轉移至 5；狀態 7 轉移至 8。計算得出活躍集合 {5, 8}。狀態 8 為 p3 的接受狀態。",
+                    tracer: { from: 4, to: 5 },
+                    edgeActive: "edge-4-5",
+                    isAcceptingStep: true,
+                    patternMatched: "p3 (a*b+)",
+                    tests: [
+                        "計算：move({2, 4, 7}, b) = {5, 8}",
+                        "判定：狀態 8 為 p3 的接受狀態。更新最近一次匹配成功暫存器 (Index: 2, 辭素: 'ab', 模式: p3)"
+                    ]
+                },
+                {
+                    header: "讀入第三個字元 'b'",
+                    char: "b",
+                    lexemeBegin: 0,
+                    forward: 3,
+                    activeStates: [6, 8],
+                    desc: "繼續預讀字元 'b'。狀態 5 轉移至 6 (p2 接受狀態)；狀態 8 轉移至自身。計算得出活躍集合 {6, 8}。此時同時匹配模式 p2 與 p3。",
+                    tracer: { from: 5, to: 6 },
+                    edgeActive: "edge-5-6",
+                    isAcceptingStep: true,
+                    patternMatched: "p2 (abb)",
+                    tests: [
+                        "計算：move({5, 8}, b) = {6, 8}",
+                        "衝突判定：狀態 6 為 p2 接受點，狀態 8 為 p3 接受點。依據「宣告優先原則」，p2 優於 p3。更新匹配暫存器為 (Index: 3, 辭素: 'abb', 模式: p2)"
+                    ]
+                }
+            ],
+            "a ": [
+                {
+                    header: "初始化狀態 (ε-closure)",
+                    char: "-",
+                    lexemeBegin: 0,
+                    forward: 0,
+                    activeStates: [0, 1, 3, 7],
+                    desc: "自動機自起始狀態 0 開始。計算 ε-closure(0) 得到初始活躍狀態集合 {0, 1, 3, 7}。",
+                    tracer: null,
+                    edgeActive: null,
+                    tests: [
+                        "初始化活躍狀態集合：{0, 1, 3, 7}"
+                    ]
+                },
+                {
+                    header: "讀入第一個字元 'a'",
+                    char: "a",
+                    lexemeBegin: 0,
+                    forward: 1,
+                    activeStates: [2, 4, 7],
+                    desc: "前移指標 forward 向右推移一格。讀入字元 'a'。計算得出活躍集合 {2, 4, 7}。狀態 2 匹配 p1。",
+                    tracer: { from: 1, to: 2 },
+                    edgeActive: "edge-1-2",
+                    isAcceptingStep: true,
+                    patternMatched: "p1 (a)",
+                    tests: [
+                        "計算：move({0, 1, 3, 7}, a) = {2, 4, 7}",
+                        "判定：狀態 2 為模式 p1 的接受狀態。更新最近一次匹配成功暫存器 (Index: 1, 辭素: 'a', 模式: p1)"
+                    ]
+                },
+                {
+                    header: "讀入第二個字元 ' ' (空格結束比對)",
+                    char: " ",
+                    lexemeBegin: 0,
+                    forward: 2,
+                    activeStates: [2],
+                    desc: "前移指標讀入空格。NFA 中無任何狀態能匹配空格，活躍狀態集合變為空 ∅。比對隨即終止並執行接收判定。",
+                    tracer: null,
+                    edgeActive: null,
+                    isAcceptingStep: false,
+                    tests: [
+                        "計算：move({2, 4, 7}, ' ') = ∅",
+                        "判定：活躍集合為空。提取備份記錄 (位置 1)。輸出辭素 'a'，對應規則 p1"
+                    ]
+                }
+            ]
+        };
+
+        // 重置模擬
+        function resetSimulation() {
+            stepIndex = 0;
+            lexemeBegin = 0;
+            forward = 0;
+            lastAcceptingIndex = -1;
+            lastAcceptingLexeme = "-";
+            lastAcceptingPattern = "-";
+
+            // 清理 Tracer 粒子
+            const tracer = document.getElementById("action-tracer");
+            if (tracer) {
+                tracer.setAttribute("opacity", "0");
+                clearTimeout(tracerTimeout);
+            }
+
+            renderStream();
+            resetNfaGraphColors();
+            updateUI();
+
+            const logContainer = document.getElementById('log-container');
+            logContainer.innerHTML = `<div class="text-slate-400 italic">[系統] 聯合 NFA 模擬器已重置。當前待測字串為："${currentString.replace(" ", "␣")}"</div>`;
+        }
+
+        // 當下拉選單變更時重設
+        function handleInputChange() {
+            currentString = document.getElementById('input-selector').value;
+            resetSimulation();
+        }
+
+        // 渲染輸入字元緩衝區
+        function renderStream() {
+            const container = document.getElementById('stream-container');
+            container.innerHTML = '';
+
+            const steps = scenarios[currentString];
+            const currentStepData = stepIndex > 0 ? steps[stepIndex - 1] : { lexemeBegin: 0, forward: 0 };
+            
+            const showBegin = currentStepData.lexemeBegin;
+            const showForward = currentStepData.forward;
+
+            for (let i = 0; i < currentString.length; i++) {
+                const char = currentString[i];
+                
+                // 外層包裝容器
+                const charWrapper = document.createElement('div');
+                charWrapper.className = "flex flex-col items-center relative";
+
+                // 字元卡片
+                const charBox = document.createElement('div');
+                charBox.id = `char-box-${i}`;
+                charBox.innerText = char === ' ' ? '␣' : char;
+
+                // 動態決定字元框狀態色 (已匹配、Lookahead 預讀、未掃描)
+                if (i < showBegin) {
+                    charBox.className = "stream-char w-8 h-8 rounded border border-emerald-200 bg-emerald-50 text-emerald-600 flex items-center justify-center font-mono font-bold text-xs shadow-sm";
+                } else if (i >= showBegin && i < showForward) {
+                    charBox.className = "stream-char w-8 h-8 rounded border border-red-200 bg-red-50 text-red-600 flex items-center justify-center font-mono font-bold text-xs shadow-sm";
+                } else {
+                    charBox.className = "stream-char w-8 h-8 rounded border border-slate-200 bg-white text-slate-500 flex items-center justify-center font-mono font-bold text-xs shadow-sm";
+                }
+
+                charWrapper.appendChild(charBox);
+
+                // 指標標誌 (lexemeBegin 與 forward 指標標籤)
+                const ptrIndicator = document.createElement('div');
+                ptrIndicator.className = "flex gap-1 mt-1.5 h-4 justify-center";
+
+                if (i === showBegin) {
+                    // lexemeBegin 指標 (綠色圓點)
+                    ptrIndicator.innerHTML += `<span class="w-2 h-2 rounded-full bg-emerald-500" title="lexemeBegin"></span>`;
+                }
+                if (i === showForward) {
+                    // forward 指標 (紅色圓點)
+                    ptrIndicator.innerHTML += `<span class="w-2 h-2 rounded-full bg-red-500 animate-pulse" title="forward"></span>`;
+                }
+
+                charWrapper.appendChild(ptrIndicator);
+                container.appendChild(charWrapper);
+            }
+        }
+
+        // 還原 NFA 畫布之所有連線與狀態圓圈顏色
+        function resetNfaGraphColors() {
+            const svg = document.getElementById("combined-nfa-svg");
+
+            // 還原所有圓圈
+            const circles = svg.querySelectorAll(".state-circle");
+            circles.forEach(c => {
+                c.setAttribute("stroke", "#475569");
+                c.setAttribute("fill", "#ffffff");
+                c.setAttribute("stroke-width", "1.5");
+            });
+
+            // 還原所有連線
+            const paths = svg.querySelectorAll(".edge-path");
+            paths.forEach(p => {
+                p.setAttribute("stroke", "#94a3b8");
+                p.setAttribute("stroke-width", "1.5");
+            });
+        }
+
+        // 動態高亮作用中的 NFA 活躍狀態與相關路徑
+        function applyNfaHighlights(activeStates, activeEdgeId) {
+            resetNfaGraphColors();
+
+            const svg = document.getElementById("combined-nfa-svg");
+
+            // 高亮當前活躍節點
+            activeStates.forEach(id => {
+                const nodeGroup = svg.getElementById(`node-${id}`);
+                if (nodeGroup) {
+                    const circle = nodeGroup.querySelector("circle");
+                    if (circle) {
+                        circle.setAttribute("fill", "#fee2e2");
+                        circle.setAttribute("stroke", "#ef4444");
+                        circle.setAttribute("stroke-width", "2.5");
+                    }
+                }
+            });
+
+            // 高亮引發此移轉的路徑
+            if (activeEdgeId) {
+                const edge = svg.getElementById(activeEdgeId);
+                if (edge) {
+                    edge.setAttribute("stroke", "#ef4444");
+                    edge.setAttribute("stroke-width", "2.5");
+                }
+            }
+        }
+
+        // 觸發平面粒子移轉 (Tracer)
+        function triggerTracer(from, to) {
+            const tracer = document.getElementById("action-tracer");
+            if (!tracer) return;
+
+            clearTimeout(tracerTimeout);
+
+            const fromPos = nodeCoords[from];
+            const toPos = nodeCoords[to];
+
+            if (!fromPos || !toPos) {
+                tracer.setAttribute("opacity", "0");
+                return;
+            }
+
+            // 設定粒子起點與色彩 (無縮放)
+            tracer.setAttribute("cx", fromPos.x);
+            tracer.setAttribute("cy", fromPos.y);
+            tracer.setAttribute("opacity", "1");
+
+            // CSS Transition 觸發平面位移
+            setTimeout(() => {
+                tracer.setAttribute("cx", toPos.x);
+                tracer.setAttribute("cy", toPos.y);
+            }, 50);
+
+            // 淡出
+            tracerTimeout = setTimeout(() => {
+                tracer.setAttribute("opacity", "0");
+            }, 600);
+        }
+
+        // 寫入步驟技術分析日誌 (文字與比對說明一律存放於此)
+        function appendStepLog(stepNum, currentStep) {
+            const logContainer = document.getElementById('log-container');
+            
+            if (logContainer.querySelector('.text-slate-400')) {
+                logContainer.innerHTML = '';
+            }
+
+            const item = document.createElement('div');
+            // 若為回溯步驟，以醒目的橘黃色調凸顯
+            if (currentStep.isBacktrackStep) {
+                item.className = "border-l-2 border-amber-500 pl-3 py-2 bg-amber-50/50 rounded-r-lg border border-amber-100 animate-fade-in space-y-1.5";
+            } else {
+                item.className = "border-l-2 border-indigo-500 pl-3 py-2 bg-slate-50 rounded-r-lg border border-slate-100 animate-fade-in space-y-1.5";
+            }
+
+            let testsHtml = "";
+            currentStep.tests.forEach(test => {
+                testsHtml += `
+                    <div class="flex items-start gap-1.5 text-[10px] text-slate-600 font-mono">
+                        <span style="color: ${currentStep.isBacktrackStep ? '#f59e0b' : '#6366f1'}">▶</span>
+                        <span>${test}</span>
+                    </div>
+                `;
+            });
+
+            // 格式化輸出狀態內容 (不含 LaTeX 標記)
+            const activeSetString = currentStep.activeStates.length > 0 ? "{" + currentStep.activeStates.join(", ") + "}" : "∅";
+            const stateRepresentation = currentStep.char !== "-" 
+                ? "S_new = ε-closure(move(S, '" + currentStep.char + "')) = " + activeSetString
+                : "S_current = " + activeSetString;
+
+            item.innerHTML = `
+                <div class="flex justify-between font-bold text-slate-900 text-xs">
+                    <span>[步驟 ${stepNum}] ${currentStep.header}</span>
+                    <span class="text-[9px] text-slate-400 font-normal">S: ${activeSetString}</span>
+                </div>
+                <p class="text-slate-500 text-[10.5px] leading-relaxed">${currentStep.desc}</p>
+                <div class="bg-white p-2 rounded border border-slate-150 font-mono text-[10px] text-indigo-600">
+                    數學運算：${stateRepresentation}
+                </div>
+                <div class="border-t border-slate-200/60 pt-1.5 space-y-1">
+                    <span class="text-[9px] font-bold text-slate-400 block uppercase">比對與技術解析</span>
+                    ${testsHtml}
+                </div>
+            `;
+
+            logContainer.appendChild(item);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        // 渲染單行轉移查表
+        function updateTransitionTable(activeStates, nextChar) {
+            const tblCurr = document.getElementById("tbl-curr");
+            const tblA = document.getElementById("tbl-a");
+            const tblB = document.getElementById("tbl-b");
+
+            if (activeStates.length === 0) {
+                tblCurr.innerText = "∅";
+                tblA.innerText = "∅";
+                tblB.innerText = "∅";
+                return;
+            }
+
+            const stateStr = "{" + activeStates.join(", ") + "}";
+            const transition = transitionMatrix[stateStr] || { a: "∅", b: "∅" };
+
+            tblCurr.innerText = stateStr;
+            tblA.innerText = transition.a;
+            tblB.innerText = transition.b;
+
+            // 根據預讀字元高亮表格對應欄位
+            tblA.className = "p-1.5 border-r border-slate-200 text-slate-500";
+            tblB.className = "p-1.5 text-slate-500";
+
+            if (nextChar === "a") {
+                tblA.className = "p-1.5 border-r border-slate-200 text-red-600 font-bold bg-red-50";
+            } else if (nextChar === "b") {
+                tblB.className = "p-1.5 text-red-600 font-bold bg-red-50";
+            }
+        }
+
+        // 更新變數暫存器顯示
+        function updateRegisters() {
+            document.getElementById("reg-index").innerText = lastAcceptingIndex !== -1 ? lastAcceptingIndex : "-";
+            document.getElementById("reg-lexeme").innerText = lastAcceptingLexeme;
+            document.getElementById("reg-pattern").innerText = lastAcceptingPattern;
+        }
+
+        // 更新全域 UI 元件
+        function updateUI() {
+            const steps = scenarios[currentString];
+            const totalSteps = steps.length;
+
+            const nextBtn = document.getElementById('btn-step');
+            if (stepIndex >= totalSteps) {
+                nextBtn.disabled = true;
+                nextBtn.className = "px-5 py-2.5 bg-slate-300 text-slate-500 font-medium text-xs rounded-lg shadow-sm cursor-not-allowed flex items-center justify-center gap-1.5";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-medium text-xs rounded-lg shadow-sm transition-colors flex items-center justify-center gap-1.5";
+            }
+
+            // 更新變數欄位
+            if (stepIndex === 0) {
+                document.getElementById('panel-lookahead').innerText = "-";
+                document.getElementById('panel-state-set').innerText = "{0, 1, 3, 7}";
+                updateTransitionTable([0, 1, 3, 7], null);
+            } else {
+                const currentData = steps[stepIndex - 1];
+                document.getElementById('panel-lookahead').innerText = currentData.char === ' ' ? '[空白]' : currentData.char;
+                
+                const activeSetString = currentData.activeStates.length > 0 
+                    ? "{" + currentData.activeStates.join(", ") + "}" 
+                    : "∅";
+                document.getElementById('panel-state-set').innerText = activeSetString;
+
+                // 獲取下一步即將讀取的字元以利高亮查表
+                const nextChar = stepIndex < totalSteps ? steps[stepIndex].char : null;
+                updateTransitionTable(currentData.activeStates, nextChar);
+            }
+
+            updateRegisters();
+        }
+
+        // 步進前移轉移 (核心互動功能二)
+        function stepForward() {
+            const steps = scenarios[currentString];
+            if (stepIndex >= steps.length) return;
+
+            const currentStep = steps[stepIndex];
+
+            // 1. 處理狀態暫存器 (Last Seen Match)
+            if (currentStep.isAcceptingStep) {
+                lastAcceptingIndex = currentStep.forward;
+                lastAcceptingLexeme = currentString.substring(0, currentStep.forward);
+                lastAcceptingPattern = currentStep.patternMatched;
+            }
+
+            // 2. 觸發 tracer 動態粒子
+            if (currentStep.tracer) {
+                triggerTracer(currentStep.tracer.from, currentStep.tracer.to);
+            }
+
+            // 3. 高亮轉移圖狀態與路徑
+            applyNfaHighlights(currentStep.activeStates, currentStep.edgeActive);
+
+            // 4. 寫入步驟詳細日誌
+            stepIndex++;
+            appendStepLog(stepIndex, currentStep);
+
+            // 5. 更新介面
+            renderStream();
+            updateUI();
+        }
+
+        // 頁面加載完成自動重設
+        window.onload = function() {
+            resetSimulation();
+        };
+    </script>
+</body>
+</html>

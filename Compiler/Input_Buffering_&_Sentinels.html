@@ -1,0 +1,888 @@
+---
+layout: null
+title: "[Chapter 3.2] 哨兵機制與輸入緩衝"
+description: "編譯器不會一次讀入整個輸入程式而是採取雙緩衝逐段讀取，本次模擬比較有無哨兵機制下的運作狀態與開銷計算"
+role: "primary"
+related: []
+tags: ["移動端友善"]
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>輸入緩衝與哨兵機制模擬器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .buffer-cell {
+            transition: all 0.2s ease;
+        }
+        .active-cell {
+            background-color: #f8fafc;
+            border-color: #cbd5e1;
+        }
+        .forward-pointer {
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .lexeme-pointer {
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col">
+
+    <!-- 頁首導覽 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6 sticky top-0 z-10">
+        <div class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+                <h1 class="text-xl font-bold text-slate-900">詞彙分析輸入緩衝模擬器 (Input Buffering)</h1>
+                <p class="text-xs text-slate-500 mt-1">展示雙緩衝區 (Buffer Pairs) 架構、指標移動機制、以及無哨兵與有哨兵優化的分支開銷對比。</p>
+            </div>
+            <span class="text-xs bg-slate-100 text-slate-600 px-3 py-1 rounded font-mono border border-slate-200">Chapter 3.2 Input Buffering</span>
+        </div>
+    </header>
+
+    <main class="flex-grow max-w-6xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        <!-- 左側：核心控制與狀態區 (8格) -->
+        <div class="lg:col-span-8 flex flex-col gap-6">
+            
+            <!-- 優化模式選擇（主互動元素之一） -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm">
+                <h2 class="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    </svg>
+                    評估模式選擇
+                </h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <button id="mode-no-sentinel" class="flex flex-col items-start p-4 rounded-lg border-2 text-left transition-all bg-indigo-50/50 border-indigo-600" onclick="setMode('no-sentinel')">
+                        <span class="font-semibold text-slate-900 text-sm">無哨兵機制 (Without Sentinels)</span>
+                        <span class="text-xs text-slate-500 mt-1.5 leading-relaxed">每個字元移動時，均須進行兩次測試判斷：一為「是否到達緩衝區物理末端」，二為「字元類型的分類判定」。</span>
+                    </button>
+                    <button id="mode-sentinel" class="flex flex-col items-start p-4 rounded-lg border-2 text-left transition-all border-slate-200 hover:border-slate-300" onclick="setMode('sentinel')">
+                        <span class="font-semibold text-slate-900 text-sm">有哨兵機制 (With Sentinels)</span>
+                        <span class="text-xs text-slate-500 mt-1.5 leading-relaxed">在緩衝區末端置入 eof。常規字元僅需進行一次 eof 測試，僅在遭遇哨兵時才執行邊界與重載分支判斷。</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 緩衝區視覺化面板 -->
+            <div class="bg-white rounded-xl p-6 border border-slate-200 shadow-sm flex flex-col gap-6 relative overflow-hidden">
+                <div>
+                    <h2 class="text-sm font-semibold text-slate-700 mb-1">雙緩衝區實體記憶體配置 (Buffer Pairs)</h2>
+                    <p class="text-xs text-slate-500 leading-relaxed">原始輸入程式碼：<code class="bg-slate-100 px-1.5 py-0.5 rounded font-mono text-indigo-600">value == 10;</code> (其中首個等號位於緩衝區 1 末尾，第二個等號位於緩衝區 2 開頭，用以演示跨邊界前移與載入機制。)</p>
+                </div>
+
+                <!-- 緩衝區 1 -->
+                <div class="relative">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-bold text-indigo-600 tracking-wider">BUFFER 1 (大小 N = 8)</span>
+                        <span id="buf1-status" class="text-[10px] px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded font-medium border border-emerald-200">已載入記憶體</span>
+                    </div>
+                    <div class="grid grid-cols-9 gap-1 bg-slate-100 p-2 rounded-lg border border-slate-200" id="buffer1-container">
+                        <!-- 由 JS 動態生成單元格 -->
+                    </div>
+                </div>
+
+                <!-- 緩衝區 2 -->
+                <div class="relative">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-bold text-amber-600 tracking-wider">BUFFER 2 (大小 N = 8)</span>
+                        <span id="buf2-status" class="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded font-medium border border-slate-200">未初始化</span>
+                    </div>
+                    <div class="grid grid-cols-9 gap-1 bg-slate-100 p-2 rounded-lg border border-slate-200" id="buffer2-container">
+                        <!-- 由 JS 動態生成單元格 -->
+                    </div>
+                </div>
+
+                <!-- 指標軌跡與說明 -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-slate-100 text-xs">
+                    <div class="flex items-center gap-2">
+                        <div class="w-3.5 h-3.5 bg-emerald-500 rounded border border-emerald-600"></div>
+                        <span class="text-slate-600 font-medium"><code class="font-mono bg-slate-50 px-1 py-0.5 rounded border border-slate-150">lexemeBegin</code> 指標：指向當前剖析中辭素的首個字元。</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-3.5 h-3.5 bg-red-500 rounded border border-red-600"></div>
+                        <span class="text-slate-600 font-medium"><code class="font-mono bg-slate-50 px-1 py-0.5 rounded border border-slate-150">forward</code> 指標：向後掃描之預讀 (Lookahead) 指標。</span>
+                    </div>
+                </div>
+
+                <div class="bg-slate-50 p-4 rounded-lg border border-slate-200 text-xs">
+                    <h4 class="font-semibold text-slate-700 mb-1">雙緩衝區的核心效益</h4>
+                    <p class="leading-relaxed text-slate-500">藉由將輸入檔案分批讀入一對大小為 N 的緩衝記憶體中，能有效減少作業系統 read() 系統呼叫次數，避免硬碟 I/O 成為編譯速度的瓶頸。</p>
+                </div>
+            </div>
+
+            <!-- 核心互動按鈕與前進控制（主互動元素之二） -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex items-center justify-between gap-4">
+                <div class="flex items-center gap-3">
+                    <button id="btn-next" class="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-medium text-sm rounded-lg shadow-sm transition-colors flex items-center gap-2" onclick="stepForward()">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/>
+                        </svg>
+                        下一步 (Step Forward)
+                    </button>
+                    <button class="px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm rounded-lg border border-slate-200 transition-colors" onclick="resetSimulation()">
+                        重設
+                    </button>
+                </div>
+                <div class="text-right">
+                    <span class="text-xs text-slate-400 block">目前執行進度</span>
+                    <span id="step-counter" class="text-sm font-bold text-slate-700">步驟 0 / --</span>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- 右側：當前狀態、測試開銷分析、與記錄器 (4格) -->
+        <div class="lg:col-span-4 flex flex-col gap-6">
+            
+            <!-- 當前操作分析面板 -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex flex-col gap-4">
+                <h2 class="text-sm font-bold text-slate-900 border-b border-slate-100 pb-2">當前步驟比對與分析</h2>
+                
+                <div class="grid grid-cols-2 gap-2 text-center">
+                    <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-150">
+                        <span class="text-[10px] text-slate-400 block">當前讀取字元</span>
+                        <span id="panel-char" class="text-lg font-mono font-bold text-slate-800">-</span>
+                    </div>
+                    <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-150">
+                        <span class="text-[10px] text-slate-400 block">此字元測試次數</span>
+                        <span id="panel-test-count" class="text-lg font-bold text-indigo-600">-</span>
+                    </div>
+                </div>
+
+                <div class="space-y-2">
+                    <span class="text-xs font-semibold text-slate-500 block">執行的分支測試判斷：</span>
+                    <div id="test-list" class="space-y-1.5">
+                        <!-- 由 JS 動態生成測試項目 -->
+                        <div class="text-xs text-slate-400 italic">尚未開始執行步驟。請點擊「下一步」開始。</div>
+                    </div>
+                </div>
+
+                <div class="bg-indigo-50/50 rounded-lg p-3 border border-indigo-100 mt-2">
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs font-semibold text-indigo-950">累積測試總開銷 :</span>
+                        <span id="accumulated-tests" class="text-sm font-black text-indigo-700">0 次</span>
+                    </div>
+                    <p class="text-[10px] text-indigo-500 mt-1 leading-relaxed">
+                        測試次數代表最內層迴圈在處理字元時的分支預測與比較成本。
+                    </p>
+                </div>
+            </div>
+
+            <!-- 執行歷程 Log -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex-grow flex flex-col min-h-[250px]">
+                <h2 class="text-sm font-bold text-slate-900 border-b border-slate-100 pb-2 flex justify-between items-center">
+                    <span>編譯器分析歷程</span>
+                    <span class="text-[10px] text-slate-400 font-normal">時間序列</span>
+                </h2>
+                <div id="log-container" class="flex-grow overflow-y-auto text-xs space-y-2 mt-3 font-mono max-h-[300px] pr-1">
+                    <div class="text-slate-400 italic">等待點擊「下一步」以啟用分析記錄...</div>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- 頁尾說明 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500">
+        <div class="max-w-7xl mx-auto">
+             編譯器設計課程教材輔助軟體 - 詞彙分析輸入緩衝模擬
+        </div>
+    </footer>
+
+    <script>
+        // 模擬的輸入程式碼
+        const RAW_STRING = "value == 10;"; 
+        const BUFFER_SIZE = 8;
+
+        // 全域狀態
+        let currentMode = 'no-sentinel'; // 'no-sentinel' or 'sentinel'
+        let stepIndex = 0;
+        let lexemeBegin = 0;
+        let forward = 0;
+        let accumulatedTestsCount = 0;
+
+        // 兩種模式下的完整步進狀態機定義
+        let stepsData = [];
+
+        // 初始化/重設模擬
+        function initSimulation() {
+            stepIndex = 0;
+            lexemeBegin = 0;
+            forward = 0;
+            accumulatedTestsCount = 0;
+            
+            // 根據模式建立步進流程
+            if (currentMode === 'no-sentinel') {
+                buildNoSentinelSteps();
+            } else {
+                buildSentinelSteps();
+            }
+
+            renderBuffers();
+            updateUI();
+            
+            const logContainer = document.getElementById('log-container');
+            logContainer.innerHTML = `<div class="text-slate-400 italic">[系統] 模擬器已重設，目前評估模式為：${currentMode === 'no-sentinel' ? '無哨兵機制' : '有哨兵機制'}。</div>`;
+        }
+
+        // 切換模式（主互動元素一）
+        function setMode(mode) {
+            if (currentMode === mode) return;
+            currentMode = mode;
+            
+            // UI 按鈕外觀切換
+            const btnNo = document.getElementById('mode-no-sentinel');
+            const btnYes = document.getElementById('mode-sentinel');
+            
+            if (mode === 'no-sentinel') {
+                btnNo.classList.add('bg-indigo-50/50', 'border-indigo-600');
+                btnNo.classList.remove('border-slate-200');
+                btnYes.classList.remove('bg-indigo-50/50', 'border-indigo-600');
+                btnYes.classList.add('border-slate-200');
+            } else {
+                btnYes.classList.add('bg-indigo-50/50', 'border-indigo-600');
+                btnYes.classList.remove('border-slate-200');
+                btnNo.classList.remove('bg-indigo-50/50', 'border-indigo-600');
+                btnNo.classList.add('border-slate-200');
+            }
+
+            initSimulation();
+        }
+
+        // 建置「無哨兵機制」的步進數
+        function buildNoSentinelSteps() {
+            stepsData = [
+                {
+                    char: 'v',
+                    bufIndex: 0,
+                    bufNum: 1,
+                    lexemeBegin: 0,
+                    forward: 0,
+                    nextForward: 1,
+                    tests: [
+                        { text: "測試 1: 指標是否達緩衝區末端 (forward == buffer_end)?", result: "否 (0 != 7)", passed: true },
+                        { text: "測試 2: 判定讀取字元類型 (*forward++)?", result: "為 'v'，繼續掃描識別字", passed: true }
+                    ],
+                    desc: "讀取識別字首字 'v'。檢查邊界與字元類型，指標向後推移。",
+                    logText: "讀取 'v'。執行 2 次測試。指標 forward 移至 1。"
+                },
+                {
+                    char: 'a',
+                    bufIndex: 1,
+                    bufNum: 1,
+                    lexemeBegin: 0,
+                    forward: 1,
+                    nextForward: 2,
+                    tests: [
+                        { text: "測試 1: 指標是否達緩衝區末端 (forward == buffer_end)?", result: "否 (1 != 7)", passed: true },
+                        { text: "測試 2: 判定讀取字元類型 (*forward++)?", result: "為 'a'，屬於字母", passed: true }
+                    ],
+                    desc: "繼續掃描識別字。指針前移。",
+                    logText: "讀取 'a'。執行 2 次測試。指標 forward 移至 2。"
+                },
+                {
+                    char: 'l',
+                    bufIndex: 2,
+                    bufNum: 1,
+                    lexemeBegin: 0,
+                    forward: 2,
+                    nextForward: 3,
+                    tests: [
+                        { text: "測試 1: 指標是否達緩衝區末端 (forward == buffer_end)?", result: "否 (2 != 7)", passed: true },
+                        { text: "測試 2: 判定讀取字元類型 (*forward++)?", result: "為 'l'，屬於字母", passed: true }
+                    ],
+                    desc: "讀取 'l'。進行末端界限測試與字元比對。",
+                    logText: "讀取 'l'. 執行 2 次測試。指標 forward 移至 3。"
+                },
+                {
+                    char: 'u',
+                    bufIndex: 3,
+                    bufNum: 1,
+                    lexemeBegin: 0,
+                    forward: 3,
+                    nextForward: 4,
+                    tests: [
+                        { text: "測試 1: 指標是否達緩衝區末端 (forward == buffer_end)?", result: "否 (3 != 7)", passed: true },
+                        { text: "測試 2: 判定讀取字元類型 (*forward++)?", result: "為 'u'，屬於字母", passed: true }
+                    ],
+                    desc: "讀取 'u'。確認非末端後獲取字元值。",
+                    logText: "讀取 'u'。執行 2 次測試。指標 forward 移至 4。"
+                },
+                {
+                    char: 'e',
+                    bufIndex: 4,
+                    bufNum: 1,
+                    lexemeBegin: 0,
+                    forward: 4,
+                    nextForward: 5,
+                    tests: [
+                        { text: "測試 1: 指標是否達緩衝區末端 (forward == buffer_end)?", result: "否 (4 != 7)", passed: true },
+                        { text: "測試 2: 判定讀取字元類型 (*forward++)?", result: "為 'e'，屬於字母", passed: true }
+                    ],
+                    desc: "讀取 'e'。此為單詞 'value' 的尾字。指標繼續探索後續分界。",
+                    logText: "讀取 'e'。執行 2 次測試。指標 forward 移至 5。"
+                },
+                {
+                    char: '[空白]',
+                    bufIndex: 5,
+                    bufNum: 1,
+                    lexemeBegin: 0,
+                    forward: 5,
+                    nextForward: 6,
+                    tests: [
+                        { text: "測試 1: 指標是否達緩衝區末端 (forward == buffer_end)?", result: "否 (5 != 7)", passed: true },
+                        { text: "測試 2: 判定讀取字元類型 (*forward++)?", result: "為空白字元，判定單詞結束", passed: true }
+                    ],
+                    desc: "遭遇空白。此時詞彙分析器可識別出 Token <id, 'value'>。lexemeBegin 移至當前前移位置。",
+                    logText: "識別出識別字 [value]。lexemeBegin 推進至 5。forward 推進至 6。",
+                    action: () => { lexemeBegin = 5; }
+                },
+                {
+                    char: '[空白]',
+                    bufIndex: 6,
+                    bufNum: 1,
+                    lexemeBegin: 5,
+                    forward: 6,
+                    nextForward: 7,
+                    tests: [
+                        { text: "測試 1: 指標是否達緩衝區末端 (forward == buffer_end)?", result: "否 (6 != 7)", passed: true },
+                        { text: "測試 2: 判定讀取字元類型 (*forward++)?", result: "為空白字元，跳過", passed: true }
+                    ],
+                    desc: "繼續跳過運算子之前的空白字元。lexemeBegin 與 forward 同步。",
+                    logText: "跳過空白。lexemeBegin 推進至 6。forward 推進至 7。",
+                    action: () => { lexemeBegin = 6; }
+                },
+                {
+                    char: '=',
+                    bufIndex: 7,
+                    bufNum: 1,
+                    lexemeBegin: 7,
+                    forward: 7,
+                    nextForward: 8, // 跨越到緩衝區 2 的 index 0 (整體 index 8)
+                    tests: [
+                        { text: "測試 1: 指標是否達緩衝區末端 (forward == buffer_end)?", result: "是 (7 == 7) -> 執行緩衝區重載並指向 BUFFER 2", passed: true },
+                        { text: "測試 2: 判定讀取字元類型 (*forward++)?", result: "為 '='，可能為賦值或比較運算子，需前移預讀", passed: true }
+                    ],
+                    desc: "指標已達 BUFFER 1 末端。判定為末端後，載入 BUFFER 2 並將 forward 移到 BUFFER 2 的首位。同時比對該位置之字元 '='。",
+                    logText: "觸發 BUFFER 1 末端邊界！自動加載 BUFFER 2 並重載指標。讀取 '='。forward 移至 8 (Buffer 2 開頭)。",
+                    action: () => { 
+                        lexemeBegin = 7; 
+                        document.getElementById('buf2-status').innerText = '已載入記憶體';
+                        document.getElementById('buf2-status').className = 'text-[10px] px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded font-medium border border-emerald-200';
+                    }
+                },
+                {
+                    char: '=',
+                    bufIndex: 0,
+                    bufNum: 2,
+                    lexemeBegin: 7,
+                    forward: 8,
+                    nextForward: 9,
+                    tests: [
+                        { text: "測試 1: 指標是否達緩衝區末端 (forward == buffer_end)?", result: "否 (8 != 15)", passed: true },
+                        { text: "測試 2: 判定讀取字元類型 (*forward++)?", result: "為 '='，與前一個字元配對為 '=='", passed: true }
+                    ],
+                    desc: "在 BUFFER 2 開頭讀取到第二個 '='。與前一字元合併辨識為雙等號比較運算子 '=='。",
+                    logText: "讀取 '='。成功配對並辨識 Token <op, '=='>。lexemeBegin 指針重設至 9。forward 移至 9。"
+                },
+                {
+                    char: '[空白]',
+                    bufIndex: 1,
+                    bufNum: 2,
+                    lexemeBegin: 9,
+                    forward: 9,
+                    nextForward: 10,
+                    tests: [
+                        { text: "測試 1: 指標是否達緩衝區末端 (forward == buffer_end)?", result: "否 (9 != 15)", passed: true },
+                        { text: "測試 2: 判定讀取字元類型 (*forward++)?", result: "為空白字元，跳過", passed: true }
+                    ],
+                    desc: "跳過運算子後方的空白字元。更新指標位置。",
+                    logText: "跳過空白。lexemeBegin 推進至 9。forward 推進至 10。",
+                    action: () => { lexemeBegin = 9; }
+                },
+                {
+                    char: '1',
+                    bufIndex: 2,
+                    bufNum: 2,
+                    lexemeBegin: 10,
+                    forward: 10,
+                    nextForward: 11,
+                    tests: [
+                        { text: "測試 1: 指標是否達緩衝區末端 (forward == buffer_end)?", result: "否 (10 != 15)", passed: true },
+                        { text: "測試 2: 判定讀取字元類型 (*forward++)?", result: "為數字 '1'，開始掃描數值常數", passed: true }
+                    ],
+                    desc: "偵測到數字字元。開始解析數值型 Token。",
+                    logText: "讀取數字 '1'。執行 2 次測試。forward 移至 11。"
+                },
+                {
+                    char: '0',
+                    bufIndex: 3,
+                    bufNum: 2,
+                    lexemeBegin: 10,
+                    forward: 11,
+                    nextForward: 12,
+                    tests: [
+                        { text: "測試 1: 指標是否達緩衝區末端 (forward == buffer_end)?", result: "否 (11 != 15)", passed: true },
+                        { text: "測試 2: 判定讀取字元類型 (*forward++)?", result: "為數字 '0'，組成數值 '10'", passed: true }
+                    ],
+                    desc: "讀取數字 '0'。數值目前為 '10'。",
+                    logText: "讀取數字 '0'。執行 2 次測試。forward 移至 12。"
+                },
+                {
+                    char: ';',
+                    bufIndex: 4,
+                    bufNum: 2,
+                    lexemeBegin: 10,
+                    forward: 12,
+                    nextForward: 13,
+                    tests: [
+                        { text: "測試 1: 指標是否達緩衝區末端 (forward == buffer_end)?", result: "否 (12 != 15)", passed: true },
+                        { text: "測試 2: 判定讀取字元類型 (*forward++)?", result: "為分號 ';'，標示陳述式結束。數值 Token 終止", passed: true }
+                    ],
+                    desc: "遭遇分號。判定數值常數 Token <num, '10'> 讀取結束。此步驟成功匹配該數值 Token。",
+                    logText: "讀取 ';'。完成識別 Token <num, '10'>。lexemeBegin 更新至 12。forward 移至 13。"
+                }
+            ];
+        }
+
+        // 建置「有哨兵機制」的步進數
+        function buildSentinelSteps() {
+            stepsData = [
+                {
+                    char: 'v',
+                    bufIndex: 0,
+                    bufNum: 1,
+                    lexemeBegin: 0,
+                    forward: 0,
+                    nextForward: 1,
+                    tests: [
+                        { text: "測試 1: switch (*forward++) 是否為 哨兵 eof?", result: "否 (目前字元為 'v')", passed: true }
+                    ],
+                    desc: "在哨兵模式下，直接藉由指針前移進行 switch 分支。非哨兵字元僅需要 1 次條件比對。",
+                    logText: "讀取 'v'。得益於哨兵機制，本步驟僅執行 1 次測試。指標 forward 移至 1。"
+                },
+                {
+                    char: 'a',
+                    bufIndex: 1,
+                    bufNum: 1,
+                    lexemeBegin: 0,
+                    forward: 1,
+                    nextForward: 2,
+                    tests: [
+                        { text: "測試 1: switch (*forward++) 是否為 哨兵 eof?", result: "否 (目前字元為 'a')", passed: true }
+                    ],
+                    desc: "常規字母掃描。無須在每次指針前移時都檢測是否觸及緩衝區物理邊界。",
+                    logText: "讀取 'a'。僅執行 1 次測試。指標 forward 移至 2。"
+                },
+                {
+                    char: 'l',
+                    bufIndex: 2,
+                    bufNum: 1,
+                    lexemeBegin: 0,
+                    forward: 2,
+                    nextForward: 3,
+                    tests: [
+                        { text: "測試 1: switch (*forward++) 是否為 哨兵 eof?", result: "否 (目前字元為 'l')", passed: true }
+                    ],
+                    desc: "僅做一次 eof 常規比對，避開分支預測開銷。",
+                    logText: "讀取 'l'。僅執行 1 次測試。指標 forward 移至 3。"
+                },
+                {
+                    char: 'u',
+                    bufIndex: 3,
+                    bufNum: 1,
+                    lexemeBegin: 0,
+                    forward: 3,
+                    nextForward: 4,
+                    tests: [
+                        { text: "測試 1: switch (*forward++) 是否為 哨兵 eof?", result: "否 (目前字元為 'u')", passed: true }
+                    ],
+                    desc: "指標向後推移，持續累積字串內容。",
+                    logText: "讀取 'u'。僅執行 1 次測試. 指標 forward 移至 4。"
+                },
+                {
+                    char: 'e',
+                    bufIndex: 4,
+                    bufNum: 1,
+                    lexemeBegin: 0,
+                    forward: 4,
+                    nextForward: 5,
+                    tests: [
+                        { text: "測試 1: switch (*forward++) 是否為 哨兵 eof?", result: "否 (目前字元為 'e')", passed: true }
+                    ],
+                    desc: "讀取識別字末尾字元 'e'。",
+                    logText: "讀取 'e'。僅執行 1 次測試。指標 forward 移至 5。"
+                },
+                {
+                    char: '[空白]',
+                    bufIndex: 5,
+                    bufNum: 1,
+                    lexemeBegin: 0,
+                    forward: 5,
+                    nextForward: 6,
+                    tests: [
+                        { text: "測試 1: switch (*forward++) 是否為 哨兵 eof?", result: "否 (目前字元為空白)", passed: true }
+                    ],
+                    desc: "發現空白字元。單詞 'value' 解析結束。lexemeBegin 更新至當前掃描進度。",
+                    logText: "識別 Token <id, 'value'>。lexemeBegin 移至 5。forward 移至 6。",
+                    action: () => { lexemeBegin = 5; }
+                },
+                {
+                    char: '[空白]',
+                    bufIndex: 6,
+                    bufNum: 1,
+                    lexemeBegin: 5,
+                    forward: 6,
+                    nextForward: 7,
+                    tests: [
+                        { text: "測試 1: switch (*forward++) 是否為 哨兵 eof?", result: "否 (目前字元為空白)", passed: true }
+                    ],
+                    desc: "跳過無效空白。",
+                    logText: "跳過空白。lexemeBegin 更新至 6。forward 移至 7。",
+                    action: () => { lexemeBegin = 6; }
+                },
+                {
+                    char: '=',
+                    bufIndex: 7,
+                    bufNum: 1,
+                    lexemeBegin: 6,
+                    forward: 7,
+                    nextForward: 8,
+                    tests: [
+                        { text: "測試 1: switch (*forward++) 是否為 哨兵 eof?", result: "否 (目前字元為 '=')", passed: true }
+                    ],
+                    desc: "讀取第一位 '=' 運算子。下一個字元即為額外注入的哨兵字元 eof。",
+                    logText: "讀取 '='。僅執行 1 次測試。指標 forward 移至 8 (指向哨兵 eof)。"
+                },
+                {
+                    char: 'eof',
+                    bufIndex: 8,
+                    bufNum: 1,
+                    lexemeBegin: 7,
+                    forward: 8,
+                    nextForward: 9, // 指向 Buffer 2 開頭的 '='
+                    tests: [
+                        { text: "測試 1: switch (*forward++) 是否為 哨兵 eof?", result: "是 (讀取到 BUFFER 1 結尾的 eof)", passed: true },
+                        { text: "分支測試 A: 是否為第一緩衝區末端?", result: "是 -> 重載第二緩衝區，並將 forward 移到 BUFFER 2 開頭", passed: true }
+                    ],
+                    desc: "觸發哨兵字元！由於第一步比對結果為 eof，編譯器在此特殊路徑下執行額外邊界判斷，重新配置緩衝區指標並繼續解析。",
+                    logText: "命中哨兵 eof！判定為 BUFFER 1 物理邊界，載入 BUFFER 2 並將 forward 引導至 9 (Buffer 2 開頭)。",
+                    action: () => {
+                        lexemeBegin = 7;
+                        document.getElementById('buf2-status').innerText = '已載入記憶體';
+                        document.getElementById('buf2-status').className = 'text-[10px] px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded font-medium border border-emerald-200';
+                    }
+                },
+                {
+                    char: '=',
+                    bufIndex: 0,
+                    bufNum: 2,
+                    lexemeBegin: 7,
+                    forward: 9,
+                    nextForward: 10,
+                    tests: [
+                        { text: "測試 1: switch (*forward++) 是否為 哨兵 eof?", result: "否 (目前字元為 '=')", passed: true }
+                    ],
+                    desc: "在 BUFFER 2 首位成功取得下一個 '=' 字元。成功避開邊界條件，僅用一次比較即讀取該字元。",
+                    logText: "讀取 '='。僅執行 1 次測試。合併辨識為運算子 '=='。指標 forward 移至 10。"
+                },
+                {
+                    char: '[空白]',
+                    bufIndex: 1,
+                    bufNum: 2,
+                    lexemeBegin: 9,
+                    forward: 10,
+                    nextForward: 11,
+                    tests: [
+                        { text: "測試 1: switch (*forward++) 是否為 哨兵 eof?", result: "否 (目前字元為空白)", passed: true }
+                    ],
+                    desc: "跳過中間空白字元。",
+                    logText: "跳過空白。lexemeBegin 更新至 9。forward 移至 11。",
+                    action: () => { lexemeBegin = 9; }
+                },
+                {
+                    char: '1',
+                    bufIndex: 2,
+                    bufNum: 2,
+                    lexemeBegin: 10,
+                    forward: 11,
+                    nextForward: 12,
+                    tests: [
+                        { text: "測試 1: switch (*forward++) 是否為 哨兵 eof?", result: "否 (目前字元為 '1')", passed: true }
+                    ],
+                    desc: "常規掃描數值字元。",
+                    logText: "讀取 '1'。僅執行 1 次測試。指標 forward 移至 12。"
+                },
+                {
+                    char: '0',
+                    bufIndex: 3,
+                    bufNum: 2,
+                    lexemeBegin: 10,
+                    forward: 12,
+                    nextForward: 13,
+                    tests: [
+                        { text: "測試 1: switch (*forward++) 是否為 哨兵 eof?", result: "否 (目前字元為 '0')", passed: true }
+                    ],
+                    desc: "常規掃描數值字元。",
+                    logText: "讀取 '0'。僅執行 1 次測試。指標 forward 移至 13。"
+                },
+                {
+                    char: ';',
+                    bufIndex: 4,
+                    bufNum: 2,
+                    lexemeBegin: 10,
+                    forward: 13,
+                    nextForward: 14,
+                    tests: [
+                        { text: "測試 1: switch (*forward++) 是否為 哨兵 eof?", result: "否 (currently ';')", passed: true }
+                    ],
+                    desc: "讀取到分號，確認數值結束。順利解析 Token <num, '10'>。",
+                    logText: "讀取分號 '; '。順利產出數值 Token。lexemeBegin 更新至 13。forward 推進至 14。"
+                }
+            ];
+        }
+
+        // 渲染緩衝區格線
+        function renderBuffers() {
+            const buf1Container = document.getElementById('buffer1-container');
+            const buf2Container = document.getElementById('buffer2-container');
+            
+            buf1Container.innerHTML = '';
+            buf2Container.innerHTML = '';
+
+            // 緩衝區 1 內容
+            const buf1Chars = ['v', 'a', 'l', 'u', 'e', ' ', ' ', '='];
+            if (currentMode === 'sentinel') {
+                buf1Chars.push('eof');
+            }
+
+            buf1Chars.forEach((char, idx) => {
+                const cell = document.createElement('div');
+                cell.id = `b1-cell-${idx}`;
+                cell.className = "buffer-cell bg-white border border-slate-200 rounded p-2 flex flex-col items-center justify-center relative min-h-[55px]";
+                
+                const charSpan = document.createElement('span');
+                charSpan.className = "font-mono font-bold text-slate-800 text-sm";
+                charSpan.innerText = char === ' ' ? '␣' : char;
+                if (char === 'eof') charSpan.className = "font-mono font-black text-red-600 text-[10px] uppercase bg-red-50 px-1 rounded border border-red-100";
+                
+                const idxSpan = document.createElement('span');
+                idxSpan.className = "text-[9px] text-slate-400 mt-1";
+                idxSpan.innerText = idx;
+
+                cell.appendChild(charSpan);
+                cell.appendChild(idxSpan);
+
+                const ptrContainer = document.createElement('div');
+                ptrContainer.id = `b1-ptr-${idx}`;
+                ptrContainer.className = "absolute -bottom-2.5 flex gap-1 z-10";
+                cell.appendChild(ptrContainer);
+
+                buf1Container.appendChild(cell);
+            });
+
+            // 緩衝區 2 內容
+            const buf2Chars = ['=', '1', '0', ';', ' ', ' ', ' ', ' '];
+            if (currentMode === 'sentinel') {
+                buf2Chars.push('eof');
+            }
+
+            buf2Chars.forEach((char, idx) => {
+                const cell = document.createElement('div');
+                cell.id = `b2-cell-${idx}`;
+                cell.className = "buffer-cell bg-white border border-slate-200 rounded p-2 flex flex-col items-center justify-center relative min-h-[55px]";
+                
+                const charSpan = document.createElement('span');
+                charSpan.className = "font-mono font-bold text-slate-800 text-sm";
+                charSpan.innerText = char === ' ' ? '␣' : char;
+                if (char === 'eof') charSpan.className = "font-mono font-black text-red-600 text-[10px] uppercase bg-red-50 px-1 rounded border border-red-100";
+
+                const idxSpan = document.createElement('span');
+                idxSpan.className = "text-[9px] text-slate-400 mt-1";
+                idxSpan.innerText = idx + (currentMode === 'sentinel' ? 9 : 8); // 全域索引偏移
+
+                cell.appendChild(charSpan);
+                cell.appendChild(idxSpan);
+
+                const ptrContainer = document.createElement('div');
+                ptrContainer.id = `b2-ptr-${idx}`;
+                ptrContainer.className = "absolute -bottom-2.5 flex gap-1 z-10";
+                cell.appendChild(ptrContainer);
+
+                buf2Container.appendChild(cell);
+            });
+        }
+
+        // 動態移動與繪製 Pointers
+        function updatePointers(activeLexeme, activeForward) {
+            const size = currentMode === 'sentinel' ? 9 : 8;
+            for (let i = 0; i < size; i++) {
+                const ptr1 = document.getElementById(`b1-ptr-${i}`);
+                if (ptr1) ptr1.innerHTML = '';
+                const cell1 = document.getElementById(`b1-cell-${i}`);
+                if (cell1) cell1.className = "buffer-cell bg-white border border-slate-200 rounded p-2 flex flex-col items-center justify-center relative min-h-[55px]";
+                
+                const ptr2 = document.getElementById(`b2-ptr-${i}`);
+                if (ptr2) ptr2.innerHTML = '';
+                const cell2 = document.getElementById(`b2-cell-${i}`);
+                if (cell2) cell2.className = "buffer-cell bg-white border border-slate-200 rounded p-2 flex flex-col items-center justify-center relative min-h-[55px]";
+            }
+
+            const lexemeBeginSvg = `
+                <div class="lexeme-pointer flex flex-col items-center" title="lexemeBegin">
+                    <svg class="w-3.5 h-3.5 text-emerald-600 drop-shadow-sm" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 4l-8 8h5v8h6v-8h5z"/>
+                    </svg>
+                </div>
+            `;
+            const forwardSvg = `
+                <div class="forward-pointer flex flex-col items-center animate-bounce" title="forward">
+                    <svg class="w-3.5 h-3.5 text-red-600 drop-shadow-sm" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 4l-8 8h5v8h6v-8h5z"/>
+                    </svg>
+                </div>
+            `;
+
+            let lexemeTargetBuf = 1;
+            let lexemeTargetIdx = activeLexeme;
+            if (activeLexeme >= size) {
+                lexemeTargetBuf = 2;
+                lexemeTargetIdx = activeLexeme - size;
+            }
+
+            const lexemePtrDiv = document.getElementById(`b${lexemeTargetBuf}-ptr-${lexemeTargetIdx}`);
+            if (lexemePtrDiv) {
+                lexemePtrDiv.innerHTML += lexemeBeginSvg;
+            }
+            const lexemeCell = document.getElementById(`b${lexemeTargetBuf}-cell-${lexemeTargetIdx}`);
+            if (lexemeCell) {
+                lexemeCell.className = "buffer-cell bg-emerald-50 border-2 border-emerald-500 rounded p-2 flex flex-col items-center justify-center relative min-h-[55px]";
+            }
+
+            let forwardTargetBuf = 1;
+            let forwardTargetIdx = activeForward;
+            if (activeForward >= size) {
+                forwardTargetBuf = 2;
+                forwardTargetIdx = activeForward - size;
+            }
+
+            const forwardPtrDiv = document.getElementById(`b${forwardTargetBuf}-ptr-${forwardTargetIdx}`);
+            if (forwardPtrDiv) {
+                forwardPtrDiv.innerHTML += forwardSvg;
+            }
+            const forwardCell = document.getElementById(`b${forwardTargetBuf}-cell-${forwardTargetIdx}`);
+            if (forwardCell) {
+                if (lexemeTargetBuf === forwardTargetBuf && lexemeTargetIdx === forwardTargetIdx) {
+                    forwardCell.className = "buffer-cell bg-indigo-50 border-2 border-indigo-600 rounded p-2 flex flex-col items-center justify-center relative min-h-[55px]";
+                } else {
+                    forwardCell.className = "buffer-cell bg-red-50 border-2 border-red-500 rounded p-2 flex flex-col items-center justify-center relative min-h-[55px]";
+                }
+            }
+        }
+
+        // 更新介面狀態
+        function updateUI() {
+            const totalSteps = stepsData.length;
+            document.getElementById('step-counter').innerText = `步驟 ${stepIndex} / ${totalSteps}`;
+
+            const nextBtn = document.getElementById('btn-next');
+            if (stepIndex >= totalSteps) {
+                nextBtn.disabled = true;
+                nextBtn.className = "px-6 py-3 bg-slate-300 text-slate-500 font-medium text-sm rounded-lg shadow-sm cursor-not-allowed flex items-center gap-2";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "px-6 py-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-medium text-sm rounded-lg shadow-sm transition-colors flex items-center gap-2";
+            }
+
+            if (stepIndex === 0) {
+                document.getElementById('panel-char').innerText = "-";
+                document.getElementById('panel-test-count').innerText = "0";
+                document.getElementById('accumulated-tests').innerText = "0 次";
+                document.getElementById('test-list').innerHTML = `<div class="text-xs text-slate-400 italic">尚未開始執行步驟。請點擊「下一步」開始。</div>`;
+                updatePointers(0, 0);
+                
+                document.getElementById('buf2-status').innerText = '未初始化';
+                document.getElementById('buf2-status').className = 'text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded font-medium border border-slate-200';
+            } else {
+                const currentData = stepsData[stepIndex - 1];
+                document.getElementById('panel-char').innerText = currentData.char === ' ' ? '[空白]' : currentData.char;
+                
+                const stepTestsCount = currentData.tests.length;
+                document.getElementById('panel-test-count').innerText = `${stepTestsCount} 次`;
+                document.getElementById('accumulated-tests').innerText = `${accumulatedTestsCount} 次`;
+
+                let testsHtml = '';
+                currentData.tests.forEach(t => {
+                    testsHtml += `
+                        <div class="flex items-start gap-2 text-xs border border-slate-150 p-2 rounded bg-slate-50/50">
+                            <svg class="w-3.5 h-3.5 text-indigo-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+                            </svg>
+                            <div>
+                                <p class="text-slate-700 font-medium">${t.text}</p>
+                                <p class="text-indigo-600 font-mono text-[10px] mt-0.5">執行結果: ${t.result}</p>
+                            </div>
+                        </div>
+                    `;
+                });
+                document.getElementById('test-list').innerHTML = testsHtml;
+
+                updatePointers(currentData.lexemeBegin, currentData.forward);
+            }
+        }
+
+        // 單步執行
+        function stepForward() {
+            if (stepIndex >= stepsData.length) return;
+
+            const currentData = stepsData[stepIndex];
+            accumulatedTestsCount += currentData.tests.length;
+
+            if (currentData.action) {
+                currentData.action();
+            }
+
+            stepIndex++;
+            updateUI();
+            appendLog(currentData.logText, currentData.desc);
+        }
+
+        // 寫入日誌記錄
+        function appendLog(header, text) {
+            const logContainer = document.getElementById('log-container');
+            
+            if (logContainer.querySelector('.text-slate-400')) {
+                logContainer.innerHTML = '';
+            }
+
+            const item = document.createElement('div');
+            item.className = "border-l-2 border-indigo-500 pl-2.5 py-1 text-slate-700 text-xs leading-relaxed";
+            item.innerHTML = `
+                <div class="flex justify-between font-bold text-slate-900 text-[11px]">
+                    <span>[步驟 ${stepIndex}] ${header}</span>
+                    <span class="text-[9px] text-slate-400 font-normal">單步開銷: +${stepsData[stepIndex-1].tests.length} 次</span>
+                </div>
+                <p class="text-slate-500 mt-0.5 text-[10px]">${text}</p>
+            `;
+
+            logContainer.appendChild(item);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        // 重設
+        function resetSimulation() {
+            initSimulation();
+        }
+
+        window.onload = function() {
+            initSimulation();
+        };
+    </script>
+</body>
+</html>

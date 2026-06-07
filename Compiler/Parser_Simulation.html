@@ -1,7 +1,7 @@
 ---
 layout: null
 title: "[Chapter 2.2] 運算子優先權與無二義性文法"
-description: "模擬語法分析器"
+description: "模擬語法分析器建構語法分析樹的過程"
 role: "primary"
 related: []
 tags: ["移動端友善"]
@@ -248,7 +248,7 @@ tags: ["移動端友善"]
                         lookaheadIdx: 3,
                         lookaheadText: "*",
                         triggeredRule: "T → T * F",
-                        judgment: "預看符號為 '*'。在 T 的分支中發現乘法，觸發規則 T → T * F。此展開使 '*' 的節點深度（y 座標 200）大於 '+' 的節點深度（y 座標 120），決定了先乘後加的結構。",
+                        judgment: "預看符號為 '*'。在 T 的分支中發現乘法，觸發規則 T → T * F。此展開使 '*' 的節點深度大於 '+' 的節點深度，決定了先乘後加的結構。",
                         nodes: [
                             { id: "e1", label: "E", x: 250, y: 40, type: "nonterminal" },
                             { id: "e2", label: "E", x: 140, y: 120, type: "nonterminal" },

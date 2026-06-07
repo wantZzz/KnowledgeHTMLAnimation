@@ -83,7 +83,7 @@ tags: ["移動端友善"]
                     </div>
                 </div>
                 <p class="text-xs text-slate-500 leading-relaxed mt-2">
-                    演示如何透過深先走訪（Depth-First Traversal）與合成屬性（Synthesized Attributes），將中序表達式翻譯為後序表示法。
+                    演示如何透過深度優先搜尋（Depth-First Traversal）與合成屬性（Synthesized Attributes），將中序表達式翻譯為後序表示法。
                 </p>
             </div>
 
@@ -184,7 +184,7 @@ tags: ["移動端友善"]
                         <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
                         </svg>
-                        <span class="font-bold text-slate-900 text-sm">深先走訪與合成屬性（流向指示）</span>
+                        <span class="font-bold text-slate-900 text-sm">深度優先搜尋與合成屬性（流向指示）</span>
                     </div>
                     <button onclick="resetDemo()" class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition-colors">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -223,7 +223,7 @@ tags: ["移動端友善"]
         // 語法指導翻譯逐步分析數據
         const sdtSteps = [
             {
-                desc: "<b>初始狀態：</b>語法分析樹已針對算式 <code>9 - 5 + 2</code> 建構完畢。深先走訪（Depth-First Traversal）從根節點 <code>E₀</code> 開始。此時尚未進行任何求值與翻譯，輸出緩衝區為空。",
+                desc: "<b>初始狀態：</b>語法分析樹已針對算式 <code>9 - 5 + 2</code> 建構完畢。深度優先搜尋（Depth-First Traversal）從根節點 <code>E₀</code> 開始。此時尚未進行任何求值與翻譯，輸出緩衝區為空。",
                 activeNodeId: "e0",
                 triggeredAction: "無",
                 logic: "走訪器進入根節點 E₀。由於它是非終端符號，必須先遞迴向下訪問其子節點以合成屬性。",
@@ -248,7 +248,7 @@ tags: ["移動端友善"]
                 flows: []
             },
             {
-                desc: "<b>步驟 2 - 深入左側分支：</b>深先走訪遞迴向左下方移動。走訪器從根節點 <code>E₀</code> 移至其左子節點 <code>E₁</code>，再進一步向左移至更深層的 <code>E₂</code>。此時依然無法計算屬性，必須探尋至葉節點。",
+                desc: "<b>步驟 2 - 深入左側分支：</b>深度優先搜尋遞迴向左下方移動。走訪器從根節點 <code>E₀</code> 移至其左子節點 <code>E₁</code>，再進一步向左移至更深層的 <code>E₂</code>。此時依然無法計算屬性，必須探尋至葉節點。",
                 activeNodeId: "e2",
                 triggeredAction: "無",
                 logic: "走訪器持續向左下方深入。E₁ 與 E₂ 分別在等待其子樹的屬性合成。",
@@ -300,7 +300,7 @@ tags: ["移動端友善"]
                 ]
             },
             {
-                desc: "<b>步驟 4 - 訪問中間項：</b>深先走訪退回 <code>E₁</code>，隨後依照由左至右順序訪問中間的運算子節點 <code>-</code>，接著下降訪問右側子樹 <code>T₁</code> 及其葉節點 <code>5</code>。<code>T₁</code> 節點成功讀入並合成了屬性值 <code>\"5\"</code>。",
+                desc: "<b>步驟 4 - 訪問中間項：</b>深度優先搜尋退回 <code>E₁</code>，隨後依照由左至右順序訪問中間的運算子節點 <code>-</code>，接著下降訪問右側子樹 <code>T₁</code> 及其葉節點 <code>5</code>。<code>T₁</code> 節點成功讀入並合成了屬性值 <code>\"5\"</code>。",
                 activeNodeId: "val5",
                 triggeredAction: "T₁.t = \"5\"",
                 logic: "終端節點 5 匹配成功。觸發 T₁.t = 5 語意動作，將數值儲存在屬性 T₁.t 中，準備向上提交。輸出緩衝區加入 \"5\"。",
@@ -413,7 +413,7 @@ tags: ["移動端友善"]
                 desc: "<b>步驟 8 - 走訪完畢：</b>深先遍歷走訪結束，所有節點均已完成拜訪。根節點 <code>E₀.t</code> 的屬性包含了最終翻譯完畢的後序表達式 <code>\"9 5 - 2 +\"</code>。屬性成功在不依賴任何括號的情況下，完整表述了原本中序運算的優先順序。",
                 activeNodeId: "e0",
                 triggeredAction: "翻譯成功結束",
-                logic: "深先走訪退出。所有的合成屬性流向（自底向上）與翻譯順序（自頂向下遍歷）完美契合。翻譯系統輸出完整的 postfix 成果。",
+                logic: "深度優先搜尋退出。所有的合成屬性流向（自底向上）與翻譯順序（自頂向下遍歷）完美契合。翻譯系統輸出完整的 postfix 成果。",
                 output: "9 5 - 2 +",
                 nodes: [
                     { id: "e0", label: "E₀.t = \"9 5 - 2 +\"", x: 250, y: 50, type: "nonterminal", highlight: true },

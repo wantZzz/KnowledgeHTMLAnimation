@@ -1,0 +1,882 @@
+---
+layout: null
+title: "[Chapter 3.8 & 3.9] 子集合構造法"
+description: "以逐步與展示狀態轉換圖的方式說明子集合構造法是如何將聯合 NFA 轉換至 DFA"
+role: "primary"
+related: []
+tags: ["移動端友善"]
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>聯合 NFA 至 DFA 子集合構造法模擬器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 狀態節點色彩漸變，不含縮放與抖動 */
+        .state-circle {
+            transition: fill 0.4s cubic-bezier(0.4, 0, 0.2, 1), 
+                        stroke 0.4s cubic-bezier(0.4, 0, 0.2, 1), 
+                        stroke-width 0.3s ease,
+                        opacity 0.4s ease;
+        }
+        
+        /* NFA 當前運算子集高亮外觀 */
+        .active-nfa-subset {
+            fill: #fee2e2 !important;
+            stroke: #ef4444 !important;
+            stroke-width: 2.5px !important;
+            filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.2));
+        }
+
+        /* DFA 當前生成狀態高亮外觀 */
+        .active-dfa-state {
+            fill: #e0e7ff !important;
+            stroke: #4f46e5 !important;
+            stroke-width: 2.5px !important;
+            filter: drop-shadow(0 0 4px rgba(79, 70, 229, 0.2));
+        }
+
+        /* 經由演算法解鎖探索的實線 DFA 元素 */
+        .explored-dfa {
+            stroke-dasharray: none !important;
+            opacity: 1 !important;
+        }
+
+        /* 連線高亮與過渡 */
+        .edge-path {
+            transition: stroke 0.4s ease, stroke-width 0.4s ease, opacity 0.4s ease;
+        }
+        .edge-active {
+            stroke: #4f46e5 !important;
+            stroke-width: 2.5px !important;
+            opacity: 1 !important;
+        }
+
+        /* 追蹤粒子平移動畫 (不含縮放) */
+        .tracer {
+            transition: cx 0.5s cubic-bezier(0.4, 0, 0.2, 1), 
+                        cy 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+                        opacity 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col">
+
+    <!-- 頁首導覽 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6 sticky top-0 z-10">
+        <div class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+                <h1 class="text-xl font-bold text-slate-900">聯合 NFA 至 DFA 子集合構造法模擬器</h1>
+                <p class="text-xs text-slate-500 mt-1">展示如何使用子集合構造法 (Subset Construction) 將多重規則 NFA 轉換為無衝突 DFA 轉移矩陣。</p>
+            </div>
+            <span class="text-xs bg-slate-100 text-slate-600 px-3 py-1 rounded font-mono border border-slate-200">Chapter 3.8 & 3.9 Optimization</span>
+        </div>
+    </header>
+
+    <main class="flex-grow max-w-6xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        <!-- 左側：控制、聯合 NFA 與 DFA 轉換畫布 (8格) -->
+        <div class="lg:col-span-8 flex flex-col gap-6">
+            
+            <!-- 互動控制：演算法步進 (主控制面板) -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                    <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider">構造演算法執行面板</h2>
+                    <p class="text-xs text-slate-600 mt-1">逐步點擊下一步，觀察編譯器在生成期如何計算 ε-closure 並建立 DFA 轉移列。</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button id="btn-step" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-medium text-xs rounded-lg shadow-sm transition-colors flex items-center gap-1.5" onclick="stepForward()">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/>
+                        </svg>
+                        下一步 (Step Forward)
+                    </button>
+                    <button class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-xs rounded-lg border border-slate-200 transition-colors" onclick="resetSimulation()">
+                        重置
+                    </button>
+                </div>
+            </div>
+
+            <!-- 子集合構造法步驟進度條 -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm">
+                <h3 class="text-xs font-semibold text-slate-500 mb-3 uppercase tracking-wider">當前子集合構造法步驟進度</h3>
+                <div class="flex flex-wrap gap-2 animate-fade-in" id="stream-container">
+                    <!-- 由 JS 動態生成步驟卡片 -->
+                </div>
+            </div>
+
+            <!-- 自動機轉換畫布 (Combined NFA 與 DFA 分欄對照) -->
+            <div class="bg-white rounded-xl p-6 border border-slate-200 shadow-sm flex flex-col gap-4">
+                <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                    <div>
+                        <h3 class="text-sm font-bold text-slate-800">狀態子集合空間編譯對照</h3>
+                        <p class="text-xs text-slate-400 font-mono">左側：NFA 活躍狀態子集 T ➔ 右側：DFA 對應狀態實體 U</p>
+                    </div>
+                    <div class="flex gap-4 text-[10px] font-semibold">
+                        <span class="flex items-center gap-1">
+                            <span class="w-2.5 h-2.5 bg-red-100 border border-red-400 rounded-sm"></span> NFA 當前運算子集 T
+                        </span>
+                        <span class="flex items-center gap-1">
+                            <span class="w-2.5 h-2.5 bg-indigo-100 border border-indigo-400 rounded-sm"></span> DFA 對應探索狀態 U
+                        </span>
+                    </div>
+                </div>
+
+                <!-- SVG 雙面板拓撲畫布 -->
+                <div class="relative w-full overflow-x-auto bg-slate-50 rounded-lg border border-slate-150 p-2">
+                    <svg class="w-full min-w-[760px]" height="320" viewBox="0 0 760 320" id="conversion-svg">
+                        <!-- ================= 畫布分界中線 ================= -->
+                        <line x1="380" y1="10" x2="380" y2="310" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="4,4" />
+                        <text x="190" y="20" text-anchor="middle" class="text-[10px] fill-slate-400 font-bold uppercase tracking-wider">Combined NFA 拓撲區</text>
+                        <text x="570" y="20" text-anchor="middle" class="text-[10px] fill-slate-400 font-bold uppercase tracking-wider">DFA 查表編譯區</text>
+
+                        <!-- ================= LEFT: Combined NFA ================= -->
+                        <g id="nfa-edges">
+                            <!-- ε edges from S0 -->
+                            <path d="M 48 160 Q 90 90 122 62" fill="none" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="nfa-edge-0-1" class="edge-path" />
+                            <text x="85" y="105" class="text-[9px] fill-slate-400 font-mono">ε</text>
+                            
+                            <line x1="48" y1="160" x2="122" y2="160" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="nfa-edge-0-3" class="edge-path" />
+                            <text x="85" y="152" class="text-[9px] fill-slate-400 font-mono">ε</text>
+                            
+                            <path d="M 48 160 Q 90 230 122 258" fill="none" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="nfa-edge-0-7" class="edge-path" />
+                            <text x="85" y="215" class="text-[9px] fill-slate-400 font-mono">ε</text>
+
+                            <!-- p1: 1 -> 2 (a) -->
+                            <line x1="158" y1="50" x2="232" y2="50" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="nfa-edge-1-2" class="edge-path" />
+                            <text x="195" y="42" class="text-[10px] fill-slate-500 font-mono font-bold">a</text>
+
+                            <!-- p2: 3 -> 4 (a) -->
+                            <line x1="158" y1="160" x2="232" y2="160" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="nfa-edge-3-4" class="edge-path" />
+                            <text x="195" y="152" class="text-[10px] fill-slate-500 font-mono font-bold">a</text>
+                            <!-- p2: 4 -> 5 (b) -->
+                            <line x1="268" y1="160" x2="312" y2="160" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="nfa-edge-4-5" class="edge-path" />
+                            <text x="290" y="152" class="text-[10px] fill-slate-500 font-mono font-bold">b</text>
+                            <!-- p2: 5 -> 6 (b) -->
+                            <line x1="348" y1="160" x2="352" y2="160" stroke="#cbd5e1" stroke-width="1.5" /> 
+                            <path d="M 348 160 Q 355 200 310 220" fill="none" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="nfa-edge-5-6" class="edge-path" />
+                            <text x="345" y="195" class="text-[10px] fill-slate-500 font-mono font-bold">b</text>
+
+                            <!-- p3: 7 -> 7 self-loop 'a' -->
+                            <path d="M 130 242 C 100 202, 180 202, 150 242" fill="none" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="nfa-edge-7-7" class="edge-path" />
+                            <text x="140" y="198" class="text-[9px] fill-slate-400 font-mono">a</text>
+                            <!-- p3: 7 -> 8 (b) -->
+                            <line x1="158" y1="266" x2="272" y2="266" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="nfa-edge-7-8" class="edge-path" />
+                            <text x="215" y="258" class="text-[10px] fill-slate-500 font-mono font-bold">b</text>
+                            <!-- p3: 8 -> 8 self-loop 'b' -->
+                            <path d="M 280 248 C 250 208, 330 208, 300 248" fill="none" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow-nfa)" id="nfa-edge-8-8" class="edge-path" />
+                            <text x="290" y="204" class="text-[9px] fill-slate-400 font-mono">b</text>
+                        </g>
+
+                        <g id="nfa-nodes">
+                            <!-- S0 -->
+                            <g id="nfa-node-0">
+                                <circle cx="30" cy="160" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle" />
+                                <text x="30" y="164" text-anchor="middle" class="text-xs font-bold fill-slate-700">0</text>
+                            </g>
+                            <!-- p1 branch -->
+                            <g id="nfa-node-1">
+                                <circle cx="140" cy="50" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle" />
+                                <text x="140" y="54" text-anchor="middle" class="text-xs font-bold fill-slate-700">1</text>
+                            </g>
+                            <g id="nfa-node-2">
+                                <circle cx="250" cy="50" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle" />
+                                <circle cx="250" cy="50" r="14" fill="none" stroke="#475569" stroke-width="1.5" />
+                                <text x="250" y="54" text-anchor="middle" class="text-xs font-bold fill-slate-700">2</text>
+                            </g>
+                            <!-- p2 branch -->
+                            <g id="nfa-node-3">
+                                <circle cx="140" cy="160" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle" />
+                                <text x="140" y="164" text-anchor="middle" class="text-xs font-bold fill-slate-700">3</text>
+                            </g>
+                            <g id="nfa-node-4">
+                                <circle cx="250" cy="160" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle" />
+                                <text x="250" y="164" text-anchor="middle" class="text-xs font-bold fill-slate-700">4</text>
+                            </g>
+                            <g id="nfa-node-5">
+                                <circle cx="330" cy="160" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle" />
+                                <text x="330" y="164" text-anchor="middle" class="text-xs font-bold fill-slate-700">5</text>
+                            </g>
+                            <g id="nfa-node-6">
+                                <circle cx="290" cy="220" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle" />
+                                <circle cx="290" cy="220" r="14" fill="none" stroke="#475569" stroke-width="1.5" />
+                                <text x="290" y="224" text-anchor="middle" class="text-xs font-bold fill-slate-700">6</text>
+                            </g>
+                            <!-- p3 branch -->
+                            <g id="nfa-node-7">
+                                <circle cx="140" cy="266" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle" />
+                                <text x="140" y="270" text-anchor="middle" class="text-xs font-bold fill-slate-700">7</text>
+                            </g>
+                            <g id="nfa-node-8">
+                                <circle cx="290" cy="266" r="18" fill="#ffffff" stroke="#475569" stroke-width="1.5" class="state-circle" />
+                                <circle cx="290" cy="266" r="14" fill="none" stroke="#475569" stroke-width="1.5" />
+                                <text x="290" y="270" text-anchor="middle" class="text-xs font-bold fill-slate-700">8</text>
+                            </g>
+                        </g>
+
+                        <!-- ================= RIGHT: Compiled DFA ================= -->
+                        <!-- 所有的 DFA 節點與轉移邊預設設定為不透明度 0.15 且虛線，經由步驟解鎖實線化 -->
+                        <g id="dfa-edges">
+                            <!-- A -> B (a) -->
+                            <path d="M 450 80 L 590 80" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.15" marker-end="url(#arrow-dfa)" id="dfa-edge-A-B" class="edge-path" />
+                            <text x="520" y="72" class="text-[10px] fill-slate-400 font-mono font-bold" id="dfa-text-A-B" opacity="0.15">a</text>
+
+                            <!-- A -> C (b) -->
+                            <path d="M 438 98 L 438 212" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.15" marker-end="url(#arrow-dfa)" id="dfa-edge-A-C" class="edge-path" />
+                            <text x="424" y="160" class="text-[10px] fill-slate-400 font-mono font-bold" id="dfa-text-A-C" opacity="0.15">b</text>
+
+                            <!-- B -> D (a) -->
+                            <path d="M 608 98 L 608 212" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.15" marker-end="url(#arrow-dfa)" id="dfa-edge-B-D" class="edge-path" />
+                            <text x="594" y="160" class="text-[10px] fill-slate-400 font-mono font-bold" id="dfa-text-B-D" opacity="0.15">a</text>
+
+                            <!-- B -> E (b) -->
+                            <path d="M 622 88 L 708 142" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.15" marker-end="url(#arrow-dfa)" id="dfa-edge-B-E" class="edge-path" />
+                            <text x="670" y="105" class="text-[10px] fill-slate-400 font-mono font-bold" id="dfa-text-B-E" opacity="0.15">b</text>
+
+                            <!-- E -> F (b) -->
+                            <path d="M 720 178 L 720 242" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.15" marker-end="url(#arrow-dfa)" id="dfa-edge-E-F" class="edge-path" />
+                            <text x="706" y="215" class="text-[10px] fill-slate-400 font-mono font-bold" id="dfa-text-E-F" opacity="0.15">b</text>
+                        </g>
+
+                        <g id="dfa-nodes">
+                            <!-- A = {0,1,3,7} -->
+                            <g id="dfa-node-A" opacity="0.15" class="state-node">
+                                <circle cx="438" cy="80" r="18" fill="#ffffff" stroke="#64748b" stroke-dasharray="3,3" stroke-width="1.5" class="state-circle" />
+                                <text x="438" y="84" text-anchor="middle" class="text-xs font-bold fill-slate-600">A</text>
+                                <text x="438" y="54" text-anchor="middle" class="text-[8px] fill-slate-400 font-mono">{0,1,3,7}</text>
+                            </g>
+
+                            <!-- B = {2,4,7} -->
+                            <g id="dfa-node-B" opacity="0.15" class="state-node">
+                                <circle cx="608" cy="80" r="18" fill="#ffffff" stroke="#64748b" stroke-dasharray="3,3" stroke-width="1.5" class="state-circle" />
+                                <circle cx="608" cy="80" r="14" fill="none" stroke="#64748b" stroke-dasharray="3,3" stroke-width="1" />
+                                <text x="608" y="84" text-anchor="middle" class="text-xs font-bold fill-slate-600">B</text>
+                                <text x="608" y="54" text-anchor="middle" class="text-[8px] fill-slate-400 font-mono">{2,4,7}</text>
+                                <text x="608" y="108" text-anchor="middle" class="text-[8px] fill-emerald-600 font-sans font-bold">p1 接受</text>
+                            </g>
+
+                            <!-- C = {8} -->
+                            <g id="dfa-node-C" opacity="0.15" class="state-node">
+                                <circle cx="438" cy="230" r="18" fill="#ffffff" stroke="#64748b" stroke-dasharray="3,3" stroke-width="1.5" class="state-circle" />
+                                <circle cx="438" cy="230" r="14" fill="none" stroke="#64748b" stroke-dasharray="3,3" stroke-width="1" />
+                                <text x="438" y="234" text-anchor="middle" class="text-xs font-bold fill-slate-600">C</text>
+                                <text x="438" y="258" text-anchor="middle" class="text-[8px] fill-slate-400 font-mono">{8}</text>
+                                <text x="438" y="270" text-anchor="middle" class="text-[8px] fill-emerald-600 font-sans font-bold">p3 接受</text>
+                            </g>
+
+                            <!-- D = {7} -->
+                            <g id="dfa-node-D" opacity="0.15" class="state-node">
+                                <circle cx="608" cy="230" r="18" fill="#ffffff" stroke="#64748b" stroke-dasharray="3,3" stroke-width="1.5" class="state-circle" />
+                                <text x="608" y="234" text-anchor="middle" class="text-xs font-bold fill-slate-700">D</text>
+                                <text x="608" y="258" text-anchor="middle" class="text-[8px] fill-slate-400 font-mono">{7}</text>
+                            </g>
+
+                            <!-- E = {5,8} -->
+                            <g id="dfa-node-E" opacity="0.15" class="state-node">
+                                <circle cx="720" cy="160" r="18" fill="#ffffff" stroke="#64748b" stroke-dasharray="3,3" stroke-width="1.5" class="state-circle" />
+                                <circle cx="720" cy="160" r="14" fill="none" stroke="#64748b" stroke-dasharray="3,3" stroke-width="1" />
+                                <text x="720" y="164" text-anchor="middle" class="text-xs font-bold fill-slate-600">E</text>
+                                <text x="720" y="134" text-anchor="middle" class="text-[8px] fill-slate-400 font-mono">{5,8}</text>
+                                <text x="720" y="192" text-anchor="middle" class="text-[8px] fill-emerald-600 font-sans font-bold">p3 接受</text>
+                            </g>
+
+                            <!-- F = {6,8} -->
+                            <g id="dfa-node-F" opacity="0.15" class="state-node">
+                                <circle cx="720" cy="260" r="18" fill="#ffffff" stroke="#64748b" stroke-dasharray="3,3" stroke-width="1.5" class="state-circle" />
+                                <circle cx="720" cy="260" r="14" fill="none" stroke="#64748b" stroke-dasharray="3,3" stroke-width="1" />
+                                <text x="720" y="264" text-anchor="middle" class="text-xs font-bold fill-slate-600">F</text>
+                                <text x="720" y="288" text-anchor="middle" class="text-[8px] fill-slate-400 font-mono">{6,8}</text>
+                                <text x="690" y="306" class="text-[8px] fill-rose-600 font-sans font-black">衝突 - p2 優先</text>
+                            </g>
+                        </g>
+
+                        <!-- 平面追蹤粒子 -->
+                        <circle id="action-tracer" cx="-50" cy="-50" r="5" fill="#4f46e5" class="tracer" opacity="0" />
+                    </svg>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- 右側：子集狀態、單行轉移矩陣與剖析日誌面板 (4格) -->
+        <div class="lg:col-span-4 flex flex-col gap-6">
+            
+            <!-- 新增：詞彙樣式與定義規則表面板 (DFA 轉換與衝突比對憑據) -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex flex-col gap-3 font-sans">
+                <h2 class="text-sm font-bold text-slate-900 border-b border-slate-100 pb-2">詞彙樣式與優先權規則表</h2>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-[10px] text-center border border-slate-200 rounded overflow-hidden">
+                        <thead class="bg-slate-50 border-b border-slate-200">
+                            <tr>
+                                <th class="p-1 border-r border-slate-200 font-semibold text-slate-600">編號</th>
+                                <th class="p-1 border-r border-slate-200 font-semibold text-slate-600">樣式規則 (RE)</th>
+                                <th class="p-1 border-r border-slate-200 font-semibold text-slate-600">NFA 接受點</th>
+                                <th class="p-1 font-semibold text-slate-600">優先權</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="bg-white font-mono border-b border-slate-100" id="rule-p1">
+                                <td class="p-1 border-r border-slate-200 text-slate-700 font-semibold">p1</td>
+                                <td class="p-1 border-r border-slate-200 text-slate-600">a</td>
+                                <td class="p-1 border-r border-slate-200 text-emerald-600 font-bold">2</td>
+                                <td class="p-1 text-slate-500 font-sans">1 (最先宣告)</td>
+                            </tr>
+                            <tr class="bg-white font-mono border-b border-slate-100" id="rule-p2">
+                                <td class="p-1 border-r border-slate-200 text-slate-700 font-semibold">p2</td>
+                                <td class="p-1 border-r border-slate-200 text-slate-600">abb</td>
+                                <td class="p-1 border-r border-slate-200 text-emerald-600 font-bold">6</td>
+                                <td class="p-1 text-slate-500 font-sans">2 (中度)</td>
+                            </tr>
+                            <tr class="bg-white font-mono" id="rule-p3">
+                                <td class="p-1 border-r border-slate-200 text-slate-700 font-semibold">p3</td>
+                                <td class="p-1 border-r border-slate-200 text-slate-600">a*b+</td>
+                                <td class="p-1 border-r border-slate-200 text-emerald-600 font-bold">8</td>
+                                <td class="p-1 text-slate-500 font-sans">3 (末位宣告)</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="text-[9px] text-slate-400 leading-relaxed font-sans border-t border-slate-100 pt-1.5">
+                    * 規則優先權由上至下遞減（p1 &gt; p2 &gt; p3）。當 DFA 狀態（如 F = {6, 8}）同時包含多個 NFA 接受狀態時，依此宣告順序進行衝突解決。
+                </div>
+            </div>
+
+            <!-- 執行期子集建構狀態與矩陣查表 -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex flex-col gap-4 font-sans">
+                <h2 class="text-sm font-bold text-slate-900 border-b border-slate-100 pb-2">當前子集與轉移矩陣</h2>
+                
+                <div class="grid grid-cols-2 gap-2 text-center text-[10px]">
+                    <div class="bg-slate-50 p-2 rounded-lg border border-slate-150">
+                        <span class="text-[9px] text-slate-400 block font-semibold">當前 DFA 狀態 U</span>
+                        <span id="panel-dfa-state" class="text-xs font-mono font-bold text-indigo-600">-</span>
+                    </div>
+                    <div class="bg-slate-50 p-2 rounded-lg border border-slate-150">
+                        <span class="text-[9px] text-slate-400 block font-semibold">對應 NFA 狀態集 T</span>
+                        <span id="panel-nfa-subset" class="text-xs font-mono font-bold text-red-600">-</span>
+                    </div>
+                </div>
+
+                <!-- 單行子集移轉矩陣 (與 PDF 3.8.8 & 3.9 對比) -->
+                <div class="border-t border-slate-100 pt-3">
+                    <span class="text-[10px] font-bold text-slate-500 block mb-1.5">單行 Dtran 移轉列 (Dtran[U, char])</span>
+                    <table class="w-full text-[10px] text-center border border-slate-200 rounded overflow-hidden">
+                        <thead class="bg-slate-50 border-b border-slate-200">
+                            <tr>
+                                <th class="p-1.5 border-r border-slate-200 font-semibold text-slate-600">狀態名 (U)</th>
+                                <th class="p-1.5 border-r border-slate-200 font-semibold text-slate-600">遇到 'a'</th>
+                                <th class="p-1.5 font-semibold text-slate-600">遇到 'b'</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="bg-white font-mono">
+                                <td id="tbl-curr" class="p-1.5 border-r border-slate-200 text-slate-700 font-semibold">-</td>
+                                <td id="tbl-a" class="p-1.5 border-r border-slate-200 text-slate-500">-</td>
+                                <td id="tbl-b" class="p-1.5 text-slate-500">-</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 剖析步驟與技術解析 (事件與步驟說明一律存放於此區) -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex-grow flex flex-col min-h-[250px]">
+                <h2 class="text-sm font-bold text-slate-900 border-b border-slate-100 pb-2">剖析步驟與技術解析</h2>
+                <div id="log-container" class="flex-grow overflow-y-auto text-[11px] space-y-3 mt-3 font-mono max-h-[380px] pr-1 font-sans">
+                    <div class="text-slate-400 italic">等待執行步進程序...</div>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- 頁尾說明 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500 mt-auto">
+        <div class="max-w-6xl mx-auto">
+             編譯器設計課程教材輔助軟體 - 聯合NFA至DFA子集合構造法模擬器
+        </div>
+    </footer>
+
+    <!-- 畫布箭頭定義 -->
+    <svg class="absolute w-0 h-0" width="0" height="0">
+        <defs>
+            <marker id="arrow-nfa" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#94a3b8" />
+            </marker>
+            <marker id="arrow-nfa-active" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#ef4444" />
+            </marker>
+            <marker id="arrow-dfa" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#94a3b8" />
+            </marker>
+            <marker id="arrow-dfa-active" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#4f46e5" />
+            </marker>
+        </defs>
+    </svg>
+
+    <script>
+        // 核心狀態變數
+        let stepIndex = 0;
+        let tracerTimeout;
+
+        // 節點物理座標定位 (用於動態 tracer 粒子軌跡定位)
+        const nodeCoords = {
+            // NFA
+            "nfa-0": { x: 30, y: 160 },
+            "nfa-1": { x: 140, y: 50 },
+            "nfa-2": { x: 250, y: 50 },
+            "nfa-3": { x: 140, y: 160 },
+            "nfa-4": { x: 250, y: 160 },
+            "nfa-5": { x: 330, y: 160 },
+            "nfa-6": { x: 290, y: 220 },
+            "nfa-7": { x: 140, y: 266 },
+            "nfa-8": { x: 290, y: 266 },
+            // DFA
+            "dfa-A": { x: 438, y: 80 },
+            "dfa-B": { x: 608, y: 80 },
+            "dfa-C": { x: 438, y: 230 },
+            "dfa-D": { x: 608, y: 230 },
+            "dfa-E": { x: 720, y: 160 },
+            "dfa-F": { x: 720, y: 260 }
+        };
+
+        // DFA 各狀態單行轉移對照關係
+        const dfaTransitionMatrix = {
+            "A": { subset: "{0, 1, 3, 7}", a: "B", b: "C" },
+            "B": { subset: "{2, 4, 7}", a: "D", b: "E" },
+            "C": { subset: "{8}", a: "∅", b: "C" },
+            "D": { subset: "{7}", a: "D", b: "C" },
+            "E": { subset: "{5, 8}", a: "∅", b: "F" },
+            "F": { subset: "{6, 8}", a: "∅", b: "C" }
+        };
+
+        // 子集合構造法步驟流程定義 (與 PDF 3.8.8 的演算法及 3.9 直接建構法深度融合)
+        const stepsData = [
+            {
+                dfaState: "A",
+                nfaSubset: [0, 1, 3, 7],
+                desc: "步驟一：建立起始狀態 A。<br>從聯合 NFA 的起始點 0 出發，計算 ε-closure({0})。在不消耗任何字元的情況下，透過空字串 ε-轉換可到達節點 1、3、7。因此：<br>A = ε-closure({0}) = {0, 1, 3, 7}。DFA 側解鎖並生成 A 節點。",
+                logHeader: "DFA 起始狀態 A 的 ε-Closure 計算",
+                unlockedNodes: ["A"],
+                unlockedEdges: [],
+                tracer: { from: "nfa-0", to: "dfa-A" },
+                tests: [
+                    "子集合運算：ε-closure({0}) = {0, 1, 3, 7} ➔ 指派為 DFA 狀態 A",
+                    "狀態特徵：此集合不包含 any NFA 接受狀態 (2, 6, 8)，故狀態 A 為非接受狀態",
+                    "對照 3.9 直接建構法：此集合完美對應擴充語法樹根節點(root)之第一位置集 firstpos(root) = {1, 3, 7}。"
+                ]
+            },
+            {
+                dfaState: "A",
+                nfaSubset: [2, 4, 7],
+                desc: "步驟二：探尋 A 遇到 'a' 的轉移。<br>計算 move({0, 1, 3, 7}, 'a')：狀態 1、3、7 讀入 'a' 分別前移至 NFA 狀態 2、4、7。<br>再計算其閉包：ε-closure({2, 4, 7}) = {2, 4, 7}。建立 DFA 新狀態 B，並連接 A ➔ B 的 a 轉移邊。",
+                logHeader: "探索 Dtran[A, a] 移轉關係",
+                unlockedNodes: ["A", "B"],
+                unlockedEdges: ["A-B"],
+                tracer: { from: "dfa-A", to: "dfa-B" },
+                tests: [
+                    "第一步move運算：move({0, 1, 3, 7}, a) = {2, 4, 7}",
+                    "第二步閉包運算：ε-closure({2, 4, 7}) = {2, 4, 7} (對應 DFA 狀態 B)",
+                    "對照 3.9：在語法樹中，此步等同於 followpos 轉移：followpos(1) ∪ followpos(3) ∪ followpos(7)"
+                ]
+            },
+            {
+                dfaState: "A",
+                nfaSubset: [8],
+                desc: "步驟三：探尋 A 遇到 'b' 的轉移。<br>計算 move({0, 1, 3, 7}, 'b')：僅狀態 7 讀入 'b' 轉移至 8。<br>計算閉包：ε-closure({8}) = {8}。建立 DFA 新狀態 C，並連接 A ➔ C 的 b 轉移邊。",
+                logHeader: "探索 Dtran[A, b] 移轉關係",
+                unlockedNodes: ["A", "B", "C"],
+                unlockedEdges: ["A-B", "A-C"],
+                tracer: { from: "dfa-A", to: "dfa-C" },
+                tests: [
+                    "子集運算：move({0, 1, 3, 7}, b) = {8}",
+                    "ε-closure({8}) = {8} (對應 DFA 狀態 C)",
+                    "狀態判定：集合內含 NFA 接受點 8，故 DFA 狀態 C 為 p3 (a*b+) 的接受狀態"
+                ]
+            },
+            {
+                dfaState: "B",
+                nfaSubset: [7],
+                desc: "步驟四：探尋 B = {2, 4, 7} 遇到 'a' 的轉移。<br>計算 move({2, 4, 7}, 'a')：狀態 2、4 無 'a' 轉移；狀態 7 讀入 'a' 轉移至 7 自身。<br>ε-closure({7}) = {7}。建立 DFA 新狀態 D，並連接 B ➔ D 的 a 轉移邊。",
+                logHeader: "計算轉移：B 遇到 'a' ➔ 狀態 D",
+                unlockedNodes: ["A", "B", "C", "D"],
+                unlockedEdges: ["A-B", "A-C", "B-D"],
+                tracer: { from: "dfa-B", to: "dfa-D" },
+                tests: [
+                    "子集運算：move({2, 4, 7}, a) = {7}",
+                    "ε-closure({7}) = {7} (對應 DFA 狀態 D)",
+                    "對照 3.9：此處對應 followpos 運算：由位置 7 讀入 'a' 的跟隨集 followpos(7) = {7}"
+                ]
+            },
+            {
+                dfaState: "B",
+                nfaSubset: [5, 8],
+                desc: "自 DFA 狀態 B = {2, 4, 7} 經由字元 'b' 進行移轉。NFA 子集中：4 轉移至 5；7 轉移至 8。計算其閉包：ε-closure({5, 8}) = {5, 8}。建立 DFA 新狀態 E，解鎖 B → E 轉移邊。",
+                logHeader: "計算轉移：B 遇到 'b' ➔ 狀態 E",
+                unlockedNodes: ["A", "B", "C", "D", "E"],
+                unlockedEdges: ["A-B", "A-C", "B-D", "B-E"],
+                tracer: { from: "dfa-B", to: "dfa-E" },
+                tests: [
+                    "子集運算：move({2, 4, 7}, b) = {5, 8}",
+                    "ε-closure({5, 8}) = {5, 8} (對應 DFA 狀態 E)",
+                    "狀態判定：集合內含接受狀態 8，故 DFA 狀態 E 同樣屬於 p3 (a*b+) 的接受狀態"
+                ]
+            },
+            {
+                dfaState: "E",
+                nfaSubset: [6, 8],
+                desc: "自 DFA 狀態 E = {5, 8} 經由字元 'b' 進行移轉。狀態 5 移轉至 6；狀態 8 自我循環至 8。計算閉包：ε-closure({6, 8}) = {6, 8}。建立 DFA 狀態 F，解鎖 E → F 轉移邊。子集探索完畢，進入衝突判定。",
+                logHeader: "探索 Dtran[E, b] 與衝突判定",
+                unlockedNodes: ["A", "B", "C", "D", "E", "F"],
+                unlockedEdges: ["A-B", "A-C", "B-D", "B-E", "E-F"],
+                tracer: { from: "dfa-E", to: "dfa-F" },
+                tests: [
+                    "子集運算：move({5, 8}, b) = {6, 8}",
+                    "ε-closure({6, 8}) = {6, 8} (對應 DFA 狀態 F)",
+                    "優先權決策：此狀態同時包含 NFA 接受點 6 (p2: abb) 與 8 (p3: a*b+)。依據規則，p2 排在 p3 之前宣告，故解決衝突，回傳 Token KEYWORD_P2"
+                ]
+            }
+        ];
+
+        // 重置模擬器
+        function resetSimulation() {
+            stepIndex = 0;
+            
+            // 清理 Tracer 粒子
+            const tracer = document.getElementById("action-tracer");
+            if (tracer) {
+                tracer.setAttribute("opacity", "0");
+                clearTimeout(tracerTimeout);
+            }
+
+            resetGraphColors();
+            renderStream();
+            updateUI();
+            updateRuleHighlight("-");
+
+            const logContainer = document.getElementById('log-container');
+            if (logContainer) {
+                logContainer.innerHTML = `<div class="text-slate-400 italic">[系統] 編譯模擬器已重置。請點擊「下一步」逐步運行子集建構。</div>`;
+            }
+        }
+
+        // 還原 SVG 畫布不透明度與連線虛線樣式
+        function resetGraphColors() {
+            const svg = document.getElementById("conversion-svg");
+            if (!svg) return;
+
+            // 還原 NFA 部分
+            const nfaCircles = svg.querySelectorAll("#nfa-nodes .state-circle");
+            nfaCircles.forEach(c => {
+                c.setAttribute("stroke", "#475569");
+                c.setAttribute("fill", "#ffffff");
+                c.setAttribute("stroke-width", "1.5");
+            });
+
+            const nfaPaths = svg.querySelectorAll("#nfa-edges .edge-path");
+            nfaPaths.forEach(p => {
+                p.setAttribute("stroke", "#cbd5e1");
+                p.setAttribute("stroke-width", "1.5");
+                p.classList.remove("edge-active");
+            });
+
+            // 還原 DFA 隱藏與虛線狀態
+            const dfaNodeGroups = svg.querySelectorAll("#dfa-nodes .state-node");
+            dfaNodeGroups.forEach(g => {
+                g.setAttribute("opacity", "0.15");
+                const circle = g.querySelector("circle");
+                if (circle) circle.setAttribute("stroke-dasharray", "3,3");
+            });
+
+            const dfaEdgePaths = svg.querySelectorAll("#dfa-edges .edge-path");
+            dfaEdgePaths.forEach(p => {
+                p.setAttribute("opacity", "0.15");
+                p.setAttribute("stroke-dasharray", "3,3");
+                p.classList.remove("edge-active");
+            });
+
+            const dfaTexts = svg.querySelectorAll("#dfa-edges text");
+            dfaTexts.forEach(t => {
+                t.setAttribute("opacity", "0.15");
+            });
+        }
+
+        // 渲染子集合構造法演算法步驟進度條
+        function renderStream() {
+            const container = document.getElementById('stream-container');
+            if (!container) return; // 安全防護
+            container.innerHTML = '';
+            
+            const stages = ["ε-Closure", "Dtran[A,a]", "Dtran[A,b]", "Dtran[B,a]", "Dtran[B,b]", "Dtran[E,b]"];
+            
+            stages.forEach((stage, i) => {
+                const box = document.createElement('div');
+                box.className = "stream-char px-2.5 py-1.5 rounded border flex items-center justify-center font-mono font-bold text-[10px] shadow-sm transition-all";
+                box.innerText = stage;
+                
+                if (i === stepIndex) {
+                    box.className += " border-red-500 bg-red-50 text-red-600 scale-100";
+                } else if (i < stepIndex) {
+                    box.className += " border-indigo-200 bg-indigo-50 text-indigo-500";
+                } else {
+                    box.className += " border-slate-200 bg-white text-slate-400";
+                }
+                container.appendChild(box);
+            });
+        }
+
+        // 追蹤粒子定位
+        function triggerTracer(fromId, toId) {
+            const tracer = document.getElementById("action-tracer");
+            if (!tracer) return;
+
+            clearTimeout(tracerTimeout);
+
+            const fromPos = nodeCoords[fromId];
+            const toPos = nodeCoords[toId];
+
+            if (!fromPos || !toPos) {
+                tracer.setAttribute("opacity", "0");
+                return;
+            }
+
+            // 設定粒子起點與色彩 (無縮放)
+            tracer.setAttribute("cx", fromPos.x);
+            tracer.setAttribute("cy", fromPos.y);
+            tracer.setAttribute("opacity", "1");
+
+            // CSS Transition 觸發平面位移
+            setTimeout(() => {
+                tracer.setAttribute("cx", toPos.x);
+                tracer.setAttribute("cy", toPos.y);
+            }, 50);
+
+            // 淡出
+            tracerTimeout = setTimeout(() => {
+                tracer.setAttribute("opacity", "0");
+            }, 600);
+        }
+
+        // 動態探索解鎖 DFA 的節點與邊
+        function unlockDfaElements(nodes, edges) {
+            const svg = document.getElementById("conversion-svg");
+            if (!svg) return;
+
+            // 解鎖節點：變實線、不透明度改 1
+            nodes.forEach(nodeId => {
+                const g = svg.getElementById(`dfa-node-${nodeId}`);
+                if (g) {
+                    g.setAttribute("opacity", "1");
+                    const circles = g.querySelectorAll("circle");
+                    circles.forEach(c => c.removeAttribute("stroke-dasharray"));
+                }
+            });
+
+            // 解鎖邊線
+            edges.forEach(edgeId => {
+                const path = svg.getElementById(`dfa-edge-${edgeId}`);
+                if (path) {
+                    path.setAttribute("opacity", "1");
+                    path.removeAttribute("stroke-dasharray");
+                }
+                const text = svg.getElementById(`dfa-text-${edgeId}`);
+                if (text) {
+                    text.setAttribute("opacity", "1");
+                }
+            });
+        }
+
+        // 高亮當前作用中 NFA 子集與 DFA 節點
+        function highlightActiveElements(nfaSubset, dfaState) {
+            const svg = document.getElementById("conversion-svg");
+            if (!svg) return;
+
+            // 1. 高亮 NFA 部分
+            nfaSubset.forEach(nodeNum => {
+                const g = svg.getElementById(`nfa-node-${nodeNum}`);
+                if (g) {
+                    const circle = g.querySelector(".state-circle");
+                    if (circle) {
+                        circle.setAttribute("fill", "#fee2e2");
+                        circle.setAttribute("stroke", "#ef4444");
+                        circle.setAttribute("stroke-width", "2.5");
+                    }
+                }
+            });
+
+            // 2. 高亮 DFA 目前所在的單一狀態
+            const activeDfaG = svg.getElementById(`dfa-node-${dfaState}`);
+            if (activeDfaG) {
+                const circle = activeDfaG.querySelector(".state-circle");
+                if (circle) {
+                    circle.setAttribute("fill", "#e0e7ff");
+                    circle.setAttribute("stroke", "#4f46e5");
+                    circle.setAttribute("stroke-width", "2.5");
+                }
+            }
+        }
+
+        // 寫入步驟技術分析日誌
+        function appendStepLog(stepNum, currentStep) {
+            const logContainer = document.getElementById('log-container');
+            if (!logContainer) return;
+            
+            if (logContainer.querySelector('.text-slate-400')) {
+                logContainer.innerHTML = '';
+            }
+
+            const item = document.createElement('div');
+            item.className = "border-l-2 border-indigo-500 pl-3 py-2 bg-slate-50 rounded-r-lg border border-slate-100 animate-fade-in space-y-1.5";
+            
+            let testsHtml = "";
+            currentStep.tests.forEach(test => {
+                testsHtml += `
+                    <div class="flex items-start gap-1.5 text-[10px] text-slate-600 font-mono">
+                        <span class="text-indigo-500">▶</span>
+                        <span>${test}</span>
+                    </div>
+                `;
+            });
+
+            item.innerHTML = `
+                <div class="flex justify-between font-bold text-slate-900 text-xs">
+                    <span>[步驟 ${stepNum}] ${currentStep.logHeader}</span>
+                    <span class="text-[9px] text-slate-400 font-normal">DFA: ${currentStep.dfaState}</span>
+                </div>
+                <p class="text-slate-500 text-[10.5px] leading-relaxed font-sans">${currentStep.desc}</p>
+                <div class="border-t border-slate-200/60 pt-1.5 space-y-1">
+                    <span class="text-[9px] font-bold text-slate-400 block uppercase">比對與技術解析</span>
+                    ${testsHtml}
+                </div>
+            `;
+
+            logContainer.appendChild(item);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        // 更新規則表的即時高亮 (配合子集包含之接受狀態)
+        function updateRuleHighlight(dfaState) {
+            // 先恢復所有規則列預設白底
+            const rules = ["p1", "p2", "p3"];
+            rules.forEach(r => {
+                const el = document.getElementById(`rule-${r}`);
+                if (el) {
+                    el.className = "bg-white font-mono border-b border-slate-100 transition-colors duration-300";
+                }
+            });
+
+            // 根據當前 DFA 狀態對映的 NFA 接受狀態來高亮規則表
+            if (dfaState === "B") {
+                const el = document.getElementById("rule-p1");
+                if (el) el.className = "bg-emerald-50 font-mono border-b border-slate-100 transition-colors duration-300 font-bold";
+            } else if (dfaState === "C") {
+                const el = document.getElementById("rule-p3");
+                if (el) el.className = "bg-emerald-50 font-mono transition-colors duration-300 font-bold";
+            } else if (dfaState === "E") {
+                const el = document.getElementById("rule-p3");
+                if (el) el.className = "bg-emerald-50 font-mono transition-colors duration-300 font-bold";
+            } else if (dfaState === "F") {
+                // F 包含 6 (p2) 和 8 (p3)，高亮 p2
+                const el2 = document.getElementById("rule-p2");
+                if (el2) el2.className = "bg-indigo-100 font-mono border-b border-slate-100 transition-colors duration-300 font-bold text-indigo-700";
+                const el3 = document.getElementById("rule-p3");
+                if (el3) el3.className = "bg-amber-50 font-mono transition-colors duration-300 text-amber-700 opacity-60";
+            }
+        }
+
+        // 更新表格轉移對照
+        function updateTransitionTable(dfaState) {
+            const tblCurr = document.getElementById("tbl-curr");
+            const tblA = document.getElementById("tbl-a");
+            const tblB = document.getElementById("tbl-b");
+            if (!tblCurr || !tblA || !tblB) return;
+
+            const matrix = dfaTransitionMatrix[dfaState];
+            if (matrix) {
+                tblCurr.innerText = dfaState;
+                tblA.innerText = matrix.a;
+                tblB.innerText = matrix.b;
+            } else {
+                tblCurr.innerText = "-";
+                tblA.innerText = "-";
+                tblB.innerText = "-";
+            }
+        }
+
+        // 更新 UI 狀態
+        function updateUI() {
+            const totalSteps = stepsData.length;
+
+            const nextBtn = document.getElementById('btn-step');
+            if (nextBtn) {
+                if (stepIndex >= totalSteps) {
+                    nextBtn.disabled = true;
+                    nextBtn.className = "px-5 py-2.5 bg-slate-300 text-slate-500 font-medium text-xs rounded-lg shadow-sm cursor-not-allowed flex items-center justify-center gap-1.5";
+                } else {
+                    nextBtn.disabled = false;
+                    nextBtn.className = "px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-medium text-xs rounded-lg shadow-sm transition-colors flex items-center justify-center gap-1.5";
+                }
+            }
+
+            const dfaStatePanel = document.getElementById('panel-dfa-state');
+            const nfaSubsetPanel = document.getElementById('panel-nfa-subset');
+            if (dfaStatePanel && nfaSubsetPanel) {
+                if (stepIndex === 0) {
+                    dfaStatePanel.innerText = "-";
+                    nfaSubsetPanel.innerText = "-";
+                    updateTransitionTable("-");
+                } else {
+                    const currentData = stepsData[stepIndex - 1];
+                    dfaStatePanel.innerText = currentData.dfaState;
+                    
+                    const subsetStr = "{" + currentData.nfaSubset.join(",") + "}";
+                    nfaSubsetPanel.innerText = subsetStr;
+
+                    updateTransitionTable(currentData.dfaState);
+                    updateRuleHighlight(currentData.dfaState);
+                }
+            }
+        }
+
+        // 步進控制 (主要互動按鈕點擊事件)
+        function stepForward() {
+            if (stepIndex >= stepsData.length) return;
+
+            const currentStep = stepsData[stepIndex];
+
+            // 1. 觸發 tracer 動態粒子
+            if (currentStep.tracer) {
+                triggerTracer(currentStep.tracer.from, currentStep.tracer.to);
+            }
+
+            // 2. 重設畫布狀態，重新高亮當前作用中元件
+            resetGraphColors();
+
+            // 3. 解鎖 DFA 節點與邊 (包含本步之前的所有解鎖)
+            for (let i = 0; i <= stepIndex; i++) {
+                const step = stepsData[i];
+                unlockDfaElements(step.unlockedNodes, step.unlockedEdges);
+            }
+
+            // 4. 高亮當前活躍子集
+            highlightActiveElements(currentStep.nfaSubset, currentStep.dfaState);
+
+            // 5. 寫入步驟詳細日誌
+            stepIndex++;
+            appendStepLog(stepIndex, currentStep);
+
+            // 6. 更新介面
+            renderStream();
+            updateUI();
+        }
+
+        // 頁面加載完成自動重設
+        window.onload = function() {
+            resetSimulation();
+        };
+    </script>
+</body>
+</html>

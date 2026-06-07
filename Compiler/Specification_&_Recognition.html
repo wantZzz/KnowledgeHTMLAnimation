@@ -1,0 +1,1024 @@
+---
+layout: null
+title: "[Chapter 3.4] 保留字與識別字詞彙辨識"
+description: "以狀態轉換圖模擬分析器在讀取輸入時如何判斷是要辨識成保留字還是更新符號表"
+role: "primary"
+related: []
+tags: ["移動端友善"]
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>保留字與識別字狀態轉換模擬器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .state-node {
+            transition: all 0.3s ease;
+        }
+        .transition-line {
+            transition: all 0.3s ease;
+            stroke-dasharray: 4, 4;
+        }
+        .transition-line.active {
+            stroke-dasharray: 0;
+            stroke-width: 3;
+        }
+        .stream-char {
+            transition: all 0.2s ease;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col">
+
+    <!-- 頁首 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6 sticky top-0 z-10">
+        <div class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+                <h1 class="text-xl font-bold text-slate-900">保留字與識別字詞彙辨識模擬器 (Specification & Recognition)</h1>
+                <p class="text-xs text-slate-500 mt-1">展示狀態轉換圖 (Transition Diagram) 的逐字元比對路徑、回退 (Backtrack) 機制與符號表查表邏輯。</p>
+            </div>
+            <span class="text-xs bg-slate-100 text-slate-600 px-3 py-1 rounded font-mono border border-slate-200">Chapter 3.4 Recognition of Tokens</span>
+        </div>
+    </header>
+
+    <main class="flex-grow max-w-6xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 font-sans">
+        
+        <!-- 左側：核心圖形與控制區 (8格) -->
+        <div class="lg:col-span-8 flex flex-col gap-6">
+            
+            <!-- 互動控制：字串選擇與步進 (主互動區) -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                <div class="md:col-span-4">
+                    <label class="block text-xs font-semibold text-slate-500 mb-1.5">選擇測試輸入字串：</label>
+                    <select id="input-selector" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-800 focus:outline-none focus:border-indigo-500 font-mono" onchange="handleInputChange()">
+                        <option value="if ">"if " (保留字比對 ➔ Lookahead 空白 ➔ 回退並接受)</option>
+                        <option value="if1 ">"if1 " (識別字比對 ➔ 分支退化 ➔ 讀取空白 ➔ 回退並登錄)</option>
+                        <option value="iff ">"iff " (識別字比對 ➔ 分支退化 ➔ 讀取空白 ➔ 回退並登錄)</option>
+                        <option value="val ">"val " (一般識別字比對 ➔ 自我循環 ➔ 讀取空白 ➔ 回退並登錄)</option>
+                    </select>
+                </div>
+                
+                <div class="flex items-center justify-between gap-4 md:col-span-8 mt-4 md:mt-0 w-full">
+                    <div class="flex items-center gap-2">
+                        <button id="btn-step" class="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-medium text-sm rounded-lg shadow-sm transition-colors flex items-center gap-2" onclick="stepForward()">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/>
+                            </svg>
+                            下一字元 (Step Forward)
+                        </button>
+                        <button class="px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm rounded-lg border border-slate-200 transition-colors" onclick="resetSimulation()">
+                            重置
+                        </button>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-xs text-slate-400 block">目前執行進度</span>
+                        <span id="step-counter" class="text-sm font-bold text-slate-700">步驟 0 / --</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 輸入串流緩衝視覺化 -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm">
+                <h3 class="text-xs font-semibold text-slate-500 mb-3 uppercase tracking-wider">輸入字元串流與雙指標位置</h3>
+                <div class="flex items-center gap-2 overflow-x-auto py-2" id="stream-container">
+                    <!-- 由 JS 動態生成 -->
+                </div>
+                <div class="flex flex-wrap items-center gap-4 mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-400">
+                    <span class="flex items-center gap-1">
+                        <span class="w-2.5 h-2.5 bg-indigo-50 border border-indigo-200 rounded-sm"></span> 已處理字元範疇
+                    </span>
+                    <span class="flex items-center gap-1">
+                        <span class="w-2.5 h-2.5 bg-amber-50 border border-amber-300 rounded-sm"></span> 預讀比對中 (Lookahead)
+                    </span>
+                    <span class="flex items-center gap-1">
+                        <span class="w-2.5 h-2.5 bg-red-50 border border-red-400 rounded-sm"></span> 指標目前位置
+                    </span>
+                </div>
+            </div>
+
+            <!-- 狀態轉移圖 (Transition Diagram) SVG -->
+            <div class="bg-white rounded-xl p-6 border border-slate-200 shadow-sm flex flex-col gap-4">
+                <div>
+                    <h3 class="text-sm font-semibold text-slate-700 mb-1">詞彙分析器狀態轉換圖 (Transition Diagram)</h3>
+                    <p class="text-xs text-slate-400 leading-relaxed">此圖整合了保留字 `if` 與一般識別字 `id` 的轉移規則。帶星號 `*` 的雙圓圈為需要回退一格 (Backtrack) 的接受狀態。</p>
+                </div>
+
+                <div class="relative w-full overflow-x-auto bg-slate-50 rounded-lg border border-slate-150 p-2">
+                    <svg class="w-full min-w-[680px]" height="240" viewBox="0 0 680 240" id="svg-diagram">
+                        <!-- 定義箭頭樣式 -->
+                        <defs>
+                            <marker id="arrow" markerWidth="10" markerHeight="7" refX="8" refY="3.5" orient="auto">
+                                <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8" />
+                            </marker>
+                            <marker id="arrow-active" markerWidth="10" markerHeight="7" refX="8" refY="3.5" orient="auto">
+                                <polygon points="0 0, 10 3.5, 0 7" fill="#4f46e5" />
+                            </marker>
+                        </defs>
+
+                        <!-- ================= 轉移連線 (Edges) ================= -->
+                        <!-- Start 指向 0 -->
+                        <line x1="20" y1="120" x2="45" y2="120" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)" />
+                        <text x="15" y="112" class="text-[10px] fill-slate-400 font-semibold">start</text>
+
+                        <!-- 0 -> 1 (i) -->
+                        <path id="edge-0-1" d="M 90 110 Q 150 70 200 80" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)" class="transition-line" />
+                        <text x="140" y="78" id="text-edge-0-1" class="text-xs fill-slate-500 font-mono font-bold">i</text>
+
+                        <!-- 0 -> 9 (other letters except i) -->
+                        <path id="edge-0-9" d="M 90 130 Q 150 170 200 160" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)" class="transition-line" />
+                        <text x="125" y="165" id="text-edge-0-9" class="text-xs fill-slate-500 font-mono font-bold">[a-h,j-z,_]</text>
+
+                        <!-- 1 -> 2 (f) -->
+                        <line id="edge-1-2" x1="230" y1="80" x2="350" y2="80" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)" class="transition-line" />
+                        <text x="290" y="72" id="text-edge-1-2" class="text-xs fill-slate-500 font-mono font-bold">f</text>
+
+                        <!-- 1 -> 9 (letters or digits other than f) -->
+                        <line id="edge-1-9" x1="215" y1="105" x2="215" y2="135" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)" class="transition-line" />
+                        <text x="222" y="123" id="text-edge-1-9" class="text-[10px] fill-slate-500 font-mono font-bold">[a-e,g-z,0-9]</text>
+
+                        <!-- 2 -> 3 (other/delim) -->
+                        <line id="edge-2-3" x1="380" y1="80" x2="500" y2="80" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)" class="transition-line" />
+                        <text x="415" y="72" id="text-edge-2-3" class="text-xs fill-slate-500 font-mono font-bold">other</text>
+
+                        <!-- 2 -> 9 (letters or digits - deviations like 'if1', 'iff') -->
+                        <path id="edge-2-9" d="M 355 95 Q 290 120 230 145" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)" class="transition-line" />
+                        <text x="295" y="115" id="text-edge-2-9" class="text-[10px] fill-slate-500 font-mono font-bold">[a-z,0-9]</text>
+
+                        <!-- 9 -> 9 (letters or digits loop) -->
+                        <path id="edge-9-9" d="M 210 175 C 190 220, 240 220, 220 175" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)" class="transition-line" />
+                        <text x="200" y="215" id="text-edge-9-9" class="text-xs fill-slate-500 font-mono font-bold">[a-z,0-9]</text>
+
+                        <!-- 9 -> 10 (other) -->
+                        <line id="edge-9-10" x1="230" y1="160" x2="350" y2="160" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow)" class="transition-line" />
+                        <text x="285" y="152" id="text-edge-9-10" class="text-xs fill-slate-500 font-mono font-bold">other</text>
+
+
+                        <!-- ================= 狀態節點 (Nodes) ================= -->
+                        <!-- State 0 (Start) -->
+                        <g id="node-0" class="state-node cursor-pointer">
+                            <circle cx="65" cy="120" r="20" fill="#ffffff" stroke="#475569" stroke-width="2" />
+                            <text x="65" y="124" text-anchor="middle" class="text-xs font-bold fill-slate-700">0</text>
+                        </g>
+
+                        <!-- State 1 -->
+                        <g id="node-1" class="state-node">
+                            <circle cx="215" cy="80" r="20" fill="#ffffff" stroke="#475569" stroke-width="1.5" />
+                            <text x="215" y="84" text-anchor="middle" class="text-xs font-bold fill-slate-700">1</text>
+                        </g>
+
+                        <!-- State 2 -->
+                        <g id="node-2" class="state-node">
+                            <circle cx="365" cy="80" r="20" fill="#ffffff" stroke="#475569" stroke-width="1.5" />
+                            <text x="365" y="84" text-anchor="middle" class="text-xs font-bold fill-slate-700">2</text>
+                        </g>
+
+                        <!-- State 3 (Keyword Accept, Double Circle) -->
+                        <g id="node-3" class="state-node">
+                            <circle cx="525" cy="80" r="20" fill="#ffffff" stroke="#475569" stroke-width="1.5" />
+                            <circle cx="525" cy="80" r="16" fill="none" stroke="#475569" stroke-width="1.5" />
+                            <text x="525" y="84" text-anchor="middle" class="text-[10px] font-bold fill-slate-700">3</text>
+                            <text x="548" y="78" class="text-xs font-bold fill-red-600 font-mono">*</text>
+                        </g>
+
+                        <!-- State 9 -->
+                        <g id="node-9" class="state-node">
+                            <circle cx="215" cy="160" r="20" fill="#ffffff" stroke="#475569" stroke-width="1.5" />
+                            <text x="215" y="164" text-anchor="middle" class="text-xs font-bold fill-slate-700">9</text>
+                        </g>
+
+                        <!-- State 10 (ID Accept, Double Circle) -->
+                        <g id="node-10" class="state-node">
+                            <circle cx="365" cy="160" r="20" fill="#ffffff" stroke="#475569" stroke-width="1.5" />
+                            <circle cx="365" cy="160" r="16" fill="none" stroke="#475569" stroke-width="1.5" />
+                            <text x="365" y="164" text-anchor="middle" class="text-[10px] font-bold fill-slate-700">10</text>
+                            <text x="388" y="158" class="text-xs font-bold fill-red-600 font-mono">*</text>
+                        </g>
+                    </svg>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- 右側：當前剖析、查表機制與技術解析 (4格) -->
+        <div class="lg:col-span-4 flex flex-col gap-6">
+            
+            <!-- 當前剖析狀態 -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex flex-col gap-4">
+                <h2 class="text-sm font-bold text-slate-900 border-b border-slate-100 pb-2">當前剖析狀態</h2>
+                
+                <div class="grid grid-cols-2 gap-2 text-center">
+                    <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-150">
+                        <span class="text-[10px] text-slate-400 block">當前讀取字元</span>
+                        <span id="panel-char" class="text-lg font-mono font-bold text-slate-800">-</span>
+                    </div>
+                    <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-150">
+                        <span class="text-[10px] text-slate-400 block">累積緩衝區辭素</span>
+                        <span id="panel-lexeme" class="text-lg font-mono font-bold text-indigo-600">-</span>
+                    </div>
+                </div>
+
+                <!-- 新增：雙指標數值即時監控 -->
+                <div class="grid grid-cols-2 gap-2 text-xs font-mono">
+                    <div class="flex justify-between px-2.5 py-1.5 bg-slate-50 rounded border border-slate-150">
+                        <span class="text-slate-400 font-sans">lexemeBegin:</span>
+                        <span id="val-lexeme-begin" class="font-bold text-emerald-600">0</span>
+                    </div>
+                    <div class="flex justify-between px-2.5 py-1.5 bg-slate-50 rounded border border-slate-150">
+                        <span class="text-slate-400 font-sans">forward (Look):</span>
+                        <span id="val-forward" class="font-bold text-red-600">0</span>
+                    </div>
+                </div>
+
+                <!-- 新增：高亮動作狀態標記 -->
+                <div class="flex items-center justify-between border-t border-slate-100 pt-3 text-xs">
+                    <span class="font-semibold text-slate-500">編譯器核心動作：</span>
+                    <span id="compiler-status-badge" class="px-2.5 py-1 font-bold rounded-full border border-slate-200 bg-slate-50 text-slate-700 transition-all duration-300">
+                        準備就緒 Ready
+                    </span>
+                </div>
+            </div>
+
+            <!-- 符號表 (Symbol Table) -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex flex-col gap-3">
+                <div>
+                    <h2 class="text-sm font-bold text-slate-900">符號表 (Symbol Table)</h2>
+                    <p class="text-[10px] text-slate-400 mt-0.5">模擬預先安裝保留字的衝突解決方案 (Pre-install Method)。</p>
+                </div>
+                
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs border-collapse">
+                        <thead>
+                            <tr class="bg-slate-50 border-b border-slate-200">
+                                <th class="p-2 font-bold text-slate-600">索引</th>
+                                <th class="p-2 font-bold text-slate-600">字串值 (Lexeme)</th>
+                                <th class="p-2 font-bold text-slate-600">Token 類型</th>
+                            </tr>
+                        </thead>
+                        <tbody id="symbol-table-body" class="divide-y divide-slate-100 font-mono">
+                            <!-- 由 JS 動態繪製與增添 -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 剖析步驟與技術解析 -->
+            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex-grow flex flex-col min-h-[250px]">
+                <h2 class="text-sm font-bold text-slate-900 border-b border-slate-100 pb-2">剖析步驟與技術解析</h2>
+                <div id="log-container" class="flex-grow overflow-y-auto text-[11px] space-y-3 mt-3 font-mono max-h-[300px] pr-1">
+                    <div class="text-slate-400 italic">等待執行步進程序...</div>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- 頁尾 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500 mt-auto">
+        <div class="max-w-6xl mx-auto">
+             編譯器設計課程教材輔助軟體 - 詞彙辨識與保留字衝突模擬
+        </div>
+    </footer>
+
+    <script>
+        // 初始化符號表 (預安裝保留字)
+        let symbolTable = [
+            { index: 0, lexeme: "if", type: "KEYWORD_IF" },
+            { index: 1, lexeme: "then", type: "KEYWORD_THEN" },
+            { index: 2, lexeme: "else", type: "KEYWORD_ELSE" }
+        ];
+
+        // 步進狀態機全域控制
+        let currentString = "if ";
+        let stepIndex = 0;
+        let currentState = 0;
+        let lexemeAccumulator = "";
+        
+        // 記錄轉移路徑歷史，用於視覺高亮
+        let historyPath = [];
+
+        // 重新設計語法指導步進鏈，將預讀 (Lookahead) 與回退 (Backtrack) 分作獨立具體步驟
+        function getStepsForInput(input) {
+            if (input === "if ") {
+                return [
+                    { 
+                        char: "i", 
+                        state: 1, 
+                        edge: "edge-0-1", 
+                        desc: "讀取字元 'i'，符合專屬轉移條件。進入狀態 1，代表發現潛在的保留字 'if' 的開頭。", 
+                        tests: [
+                            "比對字元：輸入 'i' 匹配邊 [edge-0-1] 的轉換條件 'i'",
+                            "狀態移轉：自狀態 0 轉移至狀態 1",
+                            "指針狀態：lexemeBegin = 0, forward 指針前移至 1"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 1,
+                        lexeme: "i",
+                        isBacktrack: false,
+                        tableAction: false 
+                    },
+                    { 
+                        char: "f", 
+                        state: 2, 
+                        edge: "edge-1-2", 
+                        desc: "讀取字元 'f'，符合專屬轉移條件。進入狀態 2，目前精確匹配了關鍵字 'if'。仍需預讀下一個字元以驗證單字邊界。", 
+                        tests: [
+                            "比對字元：輸入 'f' 匹配邊 [edge-1-2] 的轉換條件 'f'",
+                            "狀態移轉：自狀態 1 轉移至狀態 2",
+                            "指針狀態：lexemeBegin = 0, forward 指針前移至 2"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 2,
+                        lexeme: "if",
+                        isBacktrack: false,
+                        tableAction: false 
+                    },
+                    { 
+                        char: " ", 
+                        state: 3, 
+                        edge: "edge-2-3", 
+                        desc: "預讀邊界字元（空白）。此時符合 'other' 分支條件，狀態機轉移至接受狀態 3（雙圓圈）。雖然確認匹配，但此空白非 Token 內容，已造成預讀過度。", 
+                        tests: [
+                            "比對字元：讀取 ' ' (空白) 屬 non-letter/digit 邊界字元，匹配 'other' 條件",
+                            "狀態移轉：自狀態 2 轉移至雙圓圈接受狀態 3",
+                            "前移代價：此時 forward 指針前進到 3 (指在空白之右)。系統必須在此判定進行 Backtrack 回退！"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 3,
+                        lexeme: "if ",
+                        isBacktrack: false,
+                        tableAction: false 
+                    },
+                    { 
+                        char: " ", 
+                        state: 3, 
+                        edge: null, 
+                        desc: "【回退機制觸發 Backtrack】因為接受狀態 3 標有星號 `*`，代表我們在確認保留字邊界時多讀入了一個字元。為了不消耗該字元並使下一次掃描能正確讀取，分析器將 `forward` 指標向左退回一格。", 
+                        tests: [
+                            "回退動作：將 forward 指標由 3 退回至 2",
+                            "辭素收斂：累積緩衝區辭素由 'if ' 回歸修正為 'if'",
+                            "符號表檢索：呼叫 installID()。查表發現 'if' 已預先登錄於索引 0。判定其為保留字類型，最終回傳 Token：KEYWORD_IF"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 2,
+                        lexeme: "if",
+                        isBacktrack: true,
+                        tableAction: true, 
+                        tokenType: "KEYWORD_IF" 
+                    }
+                ];
+            } else if (input === "if1 ") {
+                return [
+                    { 
+                        char: "i", 
+                        state: 1, 
+                        edge: "edge-0-1", 
+                        desc: "讀取字元 'i'。進入狀態 1，目前保留為潛在關鍵字 'if' 的路徑。", 
+                        tests: [
+                            "比對字元：輸入 'i' 匹配邊 [edge-0-1] 的轉換條件 'i'",
+                            "指針狀態：lexemeBegin = 0, forward 前移至 1"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 1,
+                        lexeme: "i",
+                        isBacktrack: false,
+                        tableAction: false 
+                    },
+                    { 
+                        char: "f", 
+                        state: 2, 
+                        edge: "edge-1-2", 
+                        desc: "讀取字元 'f'。進入狀態 2，目前與關鍵字 'if' 完全重合。前進以尋求邊界。", 
+                        tests: [
+                            "比對字元：輸入 'f' 匹配邊 [edge-1-2] 的轉換條件 'f'",
+                            "指針狀態：lexemeBegin = 0, forward 前移至 2"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 2,
+                        lexeme: "if",
+                        isBacktrack: false,
+                        tableAction: false 
+                    },
+                    { 
+                        char: "1", 
+                        state: 9, 
+                        edge: "edge-2-9", 
+                        desc: "讀取字元 '1'（數字）。此處保留字路徑宣告中斷！由於 '1' 屬於 digit，不滿足保留字邊界條件。自動機退化轉入常規識別字路徑（狀態 9）。", 
+                        tests: [
+                            "分支判定：字元 '1' 屬於 letter/digit，不滿足 edge-2-3 (other) 的邊界要求",
+                            "狀態轉移：觸發 [edge-2-9] 的退化路徑。自狀態 2 轉往狀態 9",
+                            "指針狀態：lexemeBegin = 0, forward 指移至 3"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 3,
+                        lexeme: "if1",
+                        isBacktrack: false,
+                        tableAction: false 
+                    },
+                    { 
+                        char: " ", 
+                        state: 10, 
+                        edge: "edge-9-10", 
+                        desc: "預讀邊界字元（空白）。匹配 'other' 條件，狀態機轉移至雙圓圈接受狀態 10（識別字接受點）。預讀已造成指標過度推進。", 
+                        tests: [
+                            "比對字元：讀取 ' ' (空白) 屬 non-letter/digit 邊界字元",
+                            "狀態移轉：自狀態 9 經 [edge-9-10] 轉移至雙圓圈狀態 10",
+                            "指針狀態：forward 指針前進至 4。隨後將觸發星號 (*) 規定的 Backtrack 指令"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 4,
+                        lexeme: "if1 ",
+                        isBacktrack: false,
+                        tableAction: false 
+                    },
+                    { 
+                        char: " ", 
+                        state: 10, 
+                        edge: null, 
+                        desc: "【回退機制觸發 Backtrack】因為接受狀態 10 標有星號 `*`，分析器將 `forward` 指標回退一格，確保不消耗該空白字元。", 
+                        tests: [
+                            "回退動作：將 forward 指標由 4 退回至 3",
+                            "辭素收斂：累積緩衝區辭素由 'if1 ' 回歸修正為 'if1'",
+                            "符號表登錄：呼叫 installID()。經查表檢索 'if1' 不存在於表中。於 Entry 3 動態登錄該變數，回傳 Token：IDENTIFIER"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 3,
+                        lexeme: "if1",
+                        isBacktrack: true,
+                        tableAction: true, 
+                        tokenType: "IDENTIFIER" 
+                    }
+                ];
+            } else if (input === "iff ") {
+                return [
+                    { 
+                        char: "i", 
+                        state: 1, 
+                        edge: "edge-0-1", 
+                        desc: "讀取字元 'i'。進入狀態 1。", 
+                        tests: [
+                            "比對字元：輸入 'i' 匹配邊 [edge-0-1]",
+                            "指針狀態：lexemeBegin = 0, forward 前移至 1"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 1,
+                        lexeme: "i",
+                        isBacktrack: false,
+                        tableAction: false 
+                    },
+                    { 
+                        char: "f", 
+                        state: 2, 
+                        edge: "edge-1-2", 
+                        desc: "讀取字元 'f'。進入狀態 2。", 
+                        tests: [
+                            "比對字元：輸入 'f' 匹配邊 [edge-1-2]",
+                            "指針狀態：lexemeBegin = 0, forward 前移至 2"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 2,
+                        lexeme: "if",
+                        isBacktrack: false,
+                        tableAction: false 
+                    },
+                    { 
+                        char: "f", 
+                        state: 9, 
+                        edge: "edge-2-9", 
+                        desc: "讀取第二個字母 'f'。由於其非邊界字元，保留字匹配失敗。自動機退化轉入識別字路徑（狀態 9）。", 
+                        tests: [
+                            "分支判定：'f' 屬於 letter/digit，觸發 [edge-2-9] 的退化路轉移",
+                            "狀態移轉：自狀態 2 轉往狀態 9",
+                            "指針狀態：lexemeBegin = 0, forward 指移至 3"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 3,
+                        lexeme: "iff",
+                        isBacktrack: false,
+                        tableAction: false 
+                    },
+                    { 
+                        char: " ", 
+                        state: 10, 
+                        edge: "edge-9-10", 
+                        desc: "預讀邊界字元（空白）。匹配 'other' 條件，移轉至雙圓圈接受狀態 10。為確認邊界多讀入了一個字元。", 
+                        tests: [
+                            "比對字元：讀取 ' ' (空白) 屬邊界字元",
+                            "狀態移轉：自狀態 9 經 [edge-9-10] 轉移至雙圓圈狀態 10"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 4,
+                        lexeme: "iff ",
+                        isBacktrack: false,
+                        tableAction: false 
+                    },
+                    { 
+                        char: " ", 
+                        state: 10, 
+                        edge: null, 
+                        desc: "【回退機制觸發 Backtrack】接受狀態 10 標有星號 `*`，分析器將 `forward` 指標回退一格，修正詞素並避免漏掉空白。", 
+                        tests: [
+                            "回退動作：將 forward 指標由 4 退回至 3",
+                            "辭素收斂：累積緩衝區辭素由 'iff ' 回歸修正為 'iff'",
+                            "符號表登錄：呼叫 installID()。經檢索 'iff' 不在表中。於 Entry 3 動態登錄，回傳 Token：IDENTIFIER"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 3,
+                        lexeme: "iff",
+                        isBacktrack: true,
+                        tableAction: true, 
+                        tokenType: "IDENTIFIER" 
+                    }
+                ];
+            } else if (input === "val ") {
+                return [
+                    { 
+                        char: "v", 
+                        state: 9, 
+                        edge: "edge-0-9", 
+                        desc: "讀取首個字元 'v'。因不匹配保留字開頭 'i'，排除其特定移轉。直接轉入常規識別字路徑（狀態 9）。", 
+                        tests: [
+                            "比對字元：輸入 'v' 不匹配 'i'，匹配 [edge-0-9] 條件",
+                            "狀態移轉：自狀態 0 直接經邊 [edge-0-9] 轉向狀態 9",
+                            "指針狀態：lexemeBegin = 0, forward 前置至 1"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 1,
+                        lexeme: "v",
+                        isBacktrack: false,
+                        tableAction: false 
+                    },
+                    { 
+                        char: "a", 
+                        state: 9, 
+                        edge: "edge-9-9", 
+                        desc: "讀取字母 'a'。符合識別字後續規則。觸發狀態 9 的 self-loop，繼續向後掃描。", 
+                        tests: [
+                            "比對字元：輸入 'a' 匹配狀態 9 自我循環條件",
+                            "指針狀態：lexemeBegin = 0, forward 推進至 2"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 2,
+                        lexeme: "va",
+                        isBacktrack: false,
+                        tableAction: false 
+                    },
+                    { 
+                        char: "l", 
+                        state: 9, 
+                        edge: "edge-9-9", 
+                        desc: "讀取字母 'l'。繼續留在狀態 9 的自我循環中，累積字串。", 
+                        tests: [
+                            "比對字元：輸入 'l' 匹配狀態 9 自我循環條件",
+                            "指針狀態：lexemeBegin = 0, forward 推進至 3"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 3,
+                        lexeme: "val",
+                        isBacktrack: false,
+                        tableAction: false 
+                    },
+                    { 
+                        char: " ", 
+                        state: 10, 
+                        edge: "edge-9-10", 
+                        desc: "預讀邊界字元（空白）。符合 'other' 條件，移轉至雙圓圈狀態 10。此時已找到單詞邊界。", 
+                        tests: [
+                            "比對字元：讀取 ' ' (空白) 屬邊界字元",
+                            "狀態移轉：自狀態 9 經 [edge-9-10] 轉移至狀態 10"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 4,
+                        lexeme: "val ",
+                        isBacktrack: false,
+                        tableAction: false 
+                    },
+                    { 
+                        char: " ", 
+                        state: 10, 
+                        edge: null, 
+                        desc: "【回退機制觸發 Backtrack】接受狀態 10 標有星號 `*`，將 `forward` 指標向左退回一格。修正緩衝區，準備輸出 Token。", 
+                        tests: [
+                            "回退動作：將 forward 指標由 4 退回至 3",
+                            "辭素收斂：累積緩衝區辭素由 'val ' 回歸修正為 'val'",
+                            "符號表登錄：呼叫 installID()。於 Entry 3 新增動態登錄，回傳 Token：IDENTIFIER"
+                        ],
+                        lexemeBegin: 0,
+                        forward: 3,
+                        lexeme: "val",
+                        isBacktrack: true,
+                        tableAction: true, 
+                        tokenType: "IDENTIFIER" 
+                    }
+                ];
+            }
+            return [];
+        }
+
+        // 當下拉選單變更時重設
+        function handleInputChange() {
+            currentString = document.getElementById('input-selector').value;
+            resetSimulation();
+        }
+
+        // 重置狀態機
+        function resetSimulation() {
+            stepIndex = 0;
+            currentState = 0;
+            lexemeAccumulator = "";
+            historyPath = [];
+
+            // 還原符號表至預設
+            symbolTable = [
+                { index: 0, lexeme: "if", type: "KEYWORD_IF" },
+                { index: 1, lexeme: "then", type: "KEYWORD_THEN" },
+                { index: 2, lexeme: "else", type: "KEYWORD_ELSE" }
+            ];
+
+            renderSymbolTable();
+            renderStream();
+            resetDiagramColors();
+            updateUI();
+
+            const logContainer = document.getElementById('log-container');
+            logContainer.innerHTML = `<div class="text-slate-400 italic">[系統] 狀態機已重置。當前載入測試字串："${currentString.replace(" ", "␣")}"</div>`;
+        }
+
+        // 渲染字元串流與新增實體 [EOF] 終端單元格，以利看清 forward 邊界與退回
+        function renderStream() {
+            const container = document.getElementById('stream-container');
+            container.innerHTML = '';
+            
+            // 生成字元流 + 最後一個代表終端的額外 EOF 格子
+            for (let i = 0; i <= currentString.length; i++) {
+                const char = i < currentString.length ? currentString[i] : 'EOF';
+                
+                const charWrapper = document.createElement('div');
+                charWrapper.className = "flex flex-col items-center relative w-12 shrink-0";
+                
+                const charBox = document.createElement('div');
+                charBox.id = `char-box-${i}`;
+                charBox.className = "stream-char w-10 h-10 rounded border border-slate-200 bg-white flex items-center justify-center font-mono font-bold text-sm text-slate-500 shadow-sm transition-all duration-300";
+                
+                if (char === 'EOF') {
+                    charBox.innerText = "EOF";
+                    charBox.className += " text-[9px] bg-slate-100 text-slate-400 font-sans border-dashed";
+                } else {
+                    charBox.innerText = char === ' ' ? '␣' : char;
+                }
+                
+                charWrapper.appendChild(charBox);
+                
+                // 指標容器區
+                const ptrContainer = document.createElement('div');
+                ptrContainer.id = `ptr-container-${i}`;
+                ptrContainer.className = "h-10 flex flex-col justify-end items-center mt-1 w-full gap-0.5";
+                charWrapper.appendChild(ptrContainer);
+                
+                container.appendChild(charWrapper);
+            }
+        }
+
+        // 動態高亮字元卡片背景與定位 Begin 綠指針 / Fwd、Back 紅橘指針
+        function updateStreamColors() {
+            const steps = getStepsForInput(currentString);
+            
+            let currLexemeBegin = 0;
+            let currForward = 0;
+            let isBacktrack = false;
+            
+            if (stepIndex > 0) {
+                const currentData = steps[stepIndex - 1];
+                currLexemeBegin = currentData.lexemeBegin;
+                currForward = currentData.forward;
+                isBacktrack = currentData.isBacktrack;
+            }
+            
+            // 重置與重繪
+            for (let i = 0; i <= currentString.length; i++) {
+                const charBox = document.getElementById(`char-box-${i}`);
+                const ptrContainer = document.getElementById(`ptr-container-${i}`);
+                if (!charBox || !ptrContainer) continue;
+                
+                // 基礎還原
+                charBox.className = "stream-char w-10 h-10 rounded border border-slate-200 bg-white flex items-center justify-center font-mono font-bold text-sm text-slate-500 shadow-sm transition-all duration-300";
+                ptrContainer.innerHTML = '';
+                
+                // 動態設定背景區間
+                if (i < currLexemeBegin) {
+                    charBox.className += " bg-indigo-50 border-indigo-200 text-indigo-400";
+                } else if (i >= currLexemeBegin && i < currForward) {
+                    charBox.className += " bg-amber-50 border-amber-200 text-amber-700 font-semibold";
+                } else if (i === currForward) {
+                    charBox.className += isBacktrack 
+                        ? " bg-orange-100 border-orange-400 text-orange-800 font-bold scale-105" 
+                        : " bg-red-50 border-red-400 text-red-700 font-bold scale-105";
+                }
+                
+                // 繪製 Begin (lexemeBegin) 指針
+                if (i === currLexemeBegin) {
+                    ptrContainer.innerHTML += `
+                        <span class="text-[8px] font-bold text-emerald-600 font-sans tracking-tight">Begin</span>
+                        <svg class="w-3 h-3 text-emerald-600" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 4l-8 8h5v8h6v-8h5z"/>
+                        </svg>
+                    `;
+                }
+                
+                // 繪製 forward (Lookahead / Backtrack) 指針
+                if (i === currForward) {
+                    const ptrColor = isBacktrack ? "text-orange-500" : "text-red-500";
+                    const ptrText = isBacktrack ? "Back" : "Look";
+                    ptrContainer.innerHTML += `
+                        <span class="text-[8px] font-bold ${ptrColor} font-sans tracking-tight">${ptrText}</span>
+                        <svg class="w-3 h-3 ${ptrColor} ${!isBacktrack ? 'animate-bounce' : ''}" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 4l-8 8h5v8h6v-8h5z"/>
+                        </svg>
+                    `;
+                }
+            }
+        }
+
+        // 渲染符號表表格
+        function renderSymbolTable() {
+            const tbody = document.getElementById('symbol-table-body');
+            tbody.innerHTML = '';
+            
+            symbolTable.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-50 border-b border-slate-100";
+                
+                // 標示特別被選中的項目
+                const isHighlight = lexemeAccumulator.trim() === item.lexeme;
+                const highlightClass = isHighlight ? "bg-indigo-50/80 font-bold text-indigo-600" : "text-slate-600";
+
+                tr.innerHTML = `
+                    <td class="p-2 text-slate-400 text-xs">${item.index}</td>
+                    <td class="p-2 text-xs ${highlightClass}">${item.lexeme}</td>
+                    <td class="p-2 text-xs ${highlightClass}">${item.type}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // 重置狀態轉換圖之色彩
+        function resetDiagramColors() {
+            const svg = document.getElementById('svg-diagram');
+            
+            // 還原所有圓圈
+            const circles = svg.querySelectorAll('.state-node circle');
+            circles.forEach(c => {
+                c.setAttribute('stroke', '#475569');
+                c.setAttribute('fill', '#ffffff');
+                c.setAttribute('stroke-width', '1.5');
+            });
+            
+            // 獨立還原 State 0 的預設粗邊
+            const startCircle = svg.querySelector('#node-0 circle');
+            if (startCircle) startCircle.setAttribute('stroke-width', '2');
+
+            // 還原所有文字顏色
+            const texts = svg.querySelectorAll('.state-node text');
+            texts.forEach(t => {
+                if (!t.classList.contains('fill-red-600')) {
+                    t.setAttribute('fill', '#334155');
+                }
+            });
+
+            // 還原所有轉移連線
+            const paths = svg.querySelectorAll('.transition-line');
+            paths.forEach(p => {
+                p.setAttribute('stroke', '#94a3b8');
+                p.setAttribute('stroke-width', '1.5');
+                p.classList.remove('active');
+                p.setAttribute('marker-end', 'url(#arrow)');
+            });
+
+            // 預設高亮狀態 0
+            highlightNode(0);
+        }
+
+        // 高亮指定狀態節點
+        function highlightNode(stateNum) {
+            const g = document.getElementById(`node-${stateNum}`);
+            if (!g) return;
+
+            const circles = g.querySelectorAll('circle');
+            circles.forEach(c => {
+                c.setAttribute('stroke', '#4f46e5');
+                c.setAttribute('fill', '#e0e7ff');
+                c.setAttribute('stroke-width', '2.5');
+            });
+
+            const text = g.querySelector('text');
+            if (text) {
+                text.setAttribute('fill', '#4f46e5');
+            }
+        }
+
+        // 高亮轉移線段
+        function highlightEdge(edgeId) {
+            const edge = document.getElementById(edgeId);
+            if (!edge) return;
+
+            edge.setAttribute('stroke', '#4f46e5');
+            edge.setAttribute('stroke-width', '3');
+            edge.classList.add('active');
+            edge.setAttribute('marker-end', 'url(#arrow-active)');
+        }
+
+        // 更新介面狀態與面板
+        function updateUI() {
+            const steps = getStepsForInput(currentString);
+            const totalSteps = steps.length;
+
+            const nextBtn = document.getElementById('btn-step');
+            if (stepIndex >= totalSteps) {
+                nextBtn.disabled = true;
+                nextBtn.className = "px-5 py-3 bg-slate-300 text-slate-500 font-medium text-sm rounded-lg shadow-sm cursor-not-allowed flex items-center gap-2";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "px-5 py-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-medium text-sm rounded-lg shadow-sm transition-colors flex items-center gap-2";
+            }
+
+            document.getElementById('step-counter').innerText = `步驟 ${stepIndex} / ${totalSteps}`;
+
+            const charPanel = document.getElementById('panel-char');
+            const lexemePanel = document.getElementById('panel-lexeme');
+            const lexBeginPanel = document.getElementById('val-lexeme-begin');
+            const forwardPanel = document.getElementById('val-forward');
+            const statusBadge = document.getElementById('compiler-status-badge');
+
+            if (stepIndex === 0) {
+                charPanel.innerText = "-";
+                lexemePanel.innerText = "-";
+                lexBeginPanel.innerText = "0";
+                forwardPanel.innerText = "0";
+                statusBadge.innerText = "準備就緒 Ready";
+                statusBadge.className = "px-2.5 py-1 text-xs font-bold rounded-full border border-slate-200 bg-slate-50 text-slate-700";
+            } else {
+                const currentData = steps[stepIndex - 1];
+                
+                // 格式化讀取字元顯示
+                if (currentData.isBacktrack) {
+                    charPanel.innerText = "[回退]";
+                } else {
+                    charPanel.innerText = currentData.char === ' ' ? '[空白]' : currentData.char;
+                }
+                
+                lexemePanel.innerText = currentData.lexeme;
+                lexBeginPanel.innerText = currentData.lexemeBegin;
+                forwardPanel.innerText = currentData.forward;
+                
+                // 動態設定編譯器狀態標籤顏色 (警告橘 / 成功綠 / 掃描藍)
+                if (currentData.isBacktrack) {
+                    statusBadge.innerText = "觸發回退 Backtracking";
+                    statusBadge.className = "px-2.5 py-1 text-xs font-bold rounded-full border border-orange-300 bg-orange-50 text-orange-700 animate-pulse border-2 shadow-sm";
+                } else if (stepIndex === totalSteps) {
+                    statusBadge.innerText = "辨識成功 Accepted";
+                    statusBadge.className = "px-2.5 py-1 text-xs font-bold rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 shadow-sm";
+                } else {
+                    statusBadge.innerText = "正在掃描 Scanning";
+                    statusBadge.className = "px-2.5 py-1 text-xs font-bold rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700";
+                }
+            }
+            
+            updateStreamColors();
+        }
+
+        // 寫入日誌記錄
+        function appendLog(stepNum, header, currentStep) {
+            const logContainer = document.getElementById('log-container');
+            
+            if (logContainer.querySelector('.text-slate-400')) {
+                logContainer.innerHTML = '';
+            }
+
+            const item = document.createElement('div');
+            // 回退步驟以醒目的橘黃色色塊區隔
+            if (currentStep.isBacktrack) {
+                item.className = "border-l-2 border-orange-500 pl-2.5 py-1 text-slate-700 text-xs leading-relaxed bg-orange-50/50 rounded-r border border-orange-100/60";
+            } else {
+                item.className = "border-l-2 border-indigo-500 pl-2.5 py-1 text-slate-700 text-xs leading-relaxed";
+            }
+            
+            let testsHtml = "";
+            if (currentStep.tests) {
+                currentStep.tests.forEach(test => {
+                    testsHtml += `
+                        <div class="flex items-start gap-1 text-[10px] text-slate-500 font-mono">
+                            <span class="${currentStep.isBacktrack ? 'text-orange-500' : 'text-indigo-500'}">▶</span>
+                            <span>${test}</span>
+                        </div>
+                    `;
+                });
+            }
+
+            item.innerHTML = `
+                <div class="flex justify-between font-bold text-slate-900 text-[11px]">
+                    <span>[步驟 ${stepNum}] ${header}</span>
+                    <span class="text-[9px] text-slate-400 font-normal">狀態: S${currentStep.state}</span>
+                </div>
+                <p class="text-slate-500 mt-0.5 text-[10px]">${currentStep.desc}</p>
+                <div class="mt-1.5 space-y-0.5">
+                    ${testsHtml}
+                </div>
+            `;
+
+            logContainer.appendChild(item);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        // 處置接受狀態時的查表決定 (Symbol Table Name Lookup)
+        function handleTableDecision(lexeme, defaultType) {
+            const match = symbolTable.find(item => item.lexeme === lexeme);
+            const logContainer = document.getElementById('log-container');
+            const item = document.createElement('div');
+            item.className = "border-l-2 border-emerald-500 pl-3 py-2 bg-emerald-50/50 rounded-r-lg border border-emerald-100/60 animate-fade-in space-y-1";
+            
+            if (match) {
+                // 情境 A：預安裝查表命中
+                item.innerHTML = `
+                    <div class="font-bold text-emerald-900 text-xs">[查表結果] 檢索命中預設保留字</div>
+                    <p class="text-emerald-700 text-[10px] leading-relaxed">
+                        檢索值：<strong>"${lexeme}"</strong> 已存在於符號表 Entry ${match.index}。<br>
+                        語意決策：判定為保留字而非一般變數，回傳 Token 類型：<strong>${match.type}</strong>。
+                    </p>
+                `;
+            } else {
+                // 情境 B：未命中，作為新變數插入符號表
+                const newIndex = symbolTable.length;
+                const newEntry = { index: newIndex, lexeme: lexeme, type: defaultType };
+                symbolTable.push(newEntry);
+                
+                item.innerHTML = `
+                    <div class="font-bold text-indigo-900 text-xs">[查表結果] 登錄新識別字</div>
+                    <p class="text-indigo-700 text-[10px] leading-relaxed">
+                        檢索值：<strong>"${lexeme}"</strong> 未存在於符號表中。<br>
+                        語意決策：於 Entry ${newIndex} 插入新變數，回傳 Token 類型：<strong>${defaultType}</strong>。
+                    </p>
+                `;
+            }
+            logContainer.appendChild(item);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            
+            renderSymbolTable();
+        }
+
+        // 步進前移
+        function stepForward() {
+            const steps = getStepsForInput(currentString);
+            if (stepIndex >= steps.length) return;
+
+            const currentStep = steps[stepIndex];
+            
+            // 更新狀態機資料
+            currentState = currentStep.state;
+            
+            // 直接抓取該步驟預先定義好、精準對照指標範疇的 Lexeme（修正回退不合群辭素）
+            lexemeAccumulator = currentStep.lexeme;
+
+            // 更新圖形高亮
+            resetDiagramColors();
+            
+            // 記錄目前經過的所有線與節點以維持路徑高亮
+            if (currentStep.edge) {
+                historyPath.push({ node: currentState, edge: currentStep.edge });
+            } else {
+                // 回退機制在 SVG 連線上沒有轉移條件，故只高亮圓圈
+                historyPath.push({ node: currentState, edge: null });
+            }
+            
+            historyPath.forEach(path => {
+                if (path.edge) highlightEdge(path.edge);
+                highlightNode(path.node);
+            });
+
+            // 執行步驟
+            stepIndex++;
+            
+            // 寫入技術解析日誌
+            const stepHeader = currentStep.isBacktrack 
+                ? "觸發回退 Backtrack" 
+                : `讀入字元 '${currentStep.char === ' ' ? '[空白]' : currentStep.char}'`;
+            appendLog(stepIndex, stepHeader, currentStep);
+
+            // 若走到接受狀態 (且已完成回退確認)
+            if (currentStep.tableAction) {
+                handleTableDecision(lexemeAccumulator, currentStep.tokenType);
+            } else {
+                renderSymbolTable();
+            }
+
+            updateUI();
+        }
+
+        // 頁面加載完成後自動重置初始化
+        window.onload = function() {
+            resetSimulation();
+        };
+    </script>
+</body>
+</html>

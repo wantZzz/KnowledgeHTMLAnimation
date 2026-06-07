@@ -1,0 +1,556 @@
+---
+layout: null
+title: "[Chapter 2.2] 語法分析樹"
+description: "比較不同文法規則對語法分析樹建構的影響與過程"
+role: "primary"
+related: []
+tags: ["移動端友善"]
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>左結合與右結合之語法分析樹逐步建構演示</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .tree-node {
+            transition: all 0.5s ease-in-out;
+        }
+        .highlight-edge {
+            stroke: #3b82f6;
+            stroke-width: 3;
+            stroke-dasharray: 5;
+            animation: dash 1s linear infinite;
+        }
+        @keyframes dash {
+            to {
+                stroke-dashoffset: -10;
+            }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col justify-between">
+
+    <!-- 頁首 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6">
+        <div class="max-w-6xl mx-auto flex items-center justify-between">
+            <h1 class="text-xl font-bold tracking-tight text-slate-900">編譯器設計：結合律與語法分析樹（Associativity & Parse Trees）</h1>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-mono">Chapter 2.2 Syntax Definition</span>
+        </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="max-w-6xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
+        
+        <!-- 左側控制面板與說明 -->
+        <section class="lg:col-span-5 flex flex-col gap-4">
+            
+            <!-- 模式選擇 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">請選擇演示模式</h2>
+                <div class="grid grid-cols-2 gap-2">
+                    <button id="btn-left-assoc" onclick="selectMode('left')" class="flex items-center justify-center gap-2 py-3 px-4 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-blue-600 bg-blue-50 text-blue-700">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+                        左結合 (Left-Associative)
+                    </button>
+                    <button id="btn-right-assoc" onclick="selectMode('right')" class="flex items-center justify-center gap-2 py-3 px-4 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-slate-200 text-slate-600 hover:bg-slate-50">
+                        右結合 (Right-Associative)
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 說明面板 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex-grow flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-bold text-slate-900 text-base" id="panel-title">左結合演算：9 - 5 + 2</h3>
+                        <span id="step-badge" class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-mono">步驟 1 / 5</span>
+                    </div>
+                    
+                    <div id="grammar-box" class="bg-slate-50 p-3 rounded-lg border border-slate-100 mb-4 font-mono text-xs text-slate-600">
+                        <div class="font-bold text-slate-700 mb-1">對應的文法規則 (Grammar Rules)：</div>
+                        <div id="grammar-rules">E → E - T | E + T | T</div>
+                    </div>
+
+                    <div class="prose prose-sm text-slate-600 leading-relaxed min-h-[140px]" id="step-desc">
+                        載入中...
+                    </div>
+                </div>
+
+                <!-- 多步互動元素：僅限此二個控制按鈕 -->
+                <div class="border-t border-slate-100 pt-4 mt-6 flex items-center justify-between gap-3">
+                    <button id="btn-prev" onclick="prevStep()" class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200" disabled>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                        上一步 (Prev)
+                    </button>
+                    <button id="btn-next" onclick="nextStep()" class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm">
+                        下一步 (Next)
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 計算結果比較區 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h3 class="font-bold text-slate-900 text-sm mb-3">運算求值狀態比較</h3>
+                <div class="space-y-2 text-sm">
+                    <div class="flex justify-between py-1 border-b border-slate-100">
+                        <span class="text-slate-500">當前剖析字串：</span>
+                        <span id="current-expr-str" class="font-mono font-bold text-slate-800">9 - 5 + 2</span>
+                    </div>
+                    <div class="flex justify-between py-1 border-b border-slate-100">
+                        <span class="text-slate-500">依此分析樹計算：</span>
+                        <span id="eval-process" class="font-mono text-slate-800">未開始</span>
+                    </div>
+                    <div class="flex justify-between py-1">
+                        <span class="text-slate-500">最終求值結果：</span>
+                        <span id="eval-result" class="font-mono font-bold text-slate-800">-</span>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- 右側視覺化畫布 -->
+        <section class="lg:col-span-7 bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+            <div class="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
+                <div class="flex items-center gap-2">
+                    <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                    <span class="font-bold text-slate-900 text-sm">語法分析樹 (Parse Tree) 視覺化渲染</span>
+                </div>
+                <button onclick="resetDemo()" class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H17"/></svg>
+                    重置演示
+                </button>
+            </div>
+
+            <!-- SVG 畫布容器 -->
+            <div class="relative w-full bg-slate-50 rounded-lg border border-slate-100 overflow-hidden flex items-center justify-center min-h-[420px]" id="canvas-container">
+                <svg id="tree-svg" class="w-full h-[420px]" viewBox="0 0 500 400">
+                    <!-- 動態渲染節點與連線 -->
+                </svg>
+            </div>
+            
+            <div class="mt-3 text-xs text-slate-400 flex items-center gap-1">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span>說明：內部節點（非終端符號）以藍色/灰色外框表示，葉節點（終端符號/Token）以實色背景表示。</span>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 頁尾 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500">
+        <div class="max-w-6xl mx-auto">
+             編譯器設計課程教材輔助軟體 - 語法定義與結合律說明
+        </div>
+    </footer>
+
+    <script>
+        // 定義演示步驟數據
+        const demoData = {
+            left: {
+                title: "左結合演算演示：9 - 5 + 2",
+                expression: "9 - 5 + 2",
+                grammar: "E → E - T  |  E + T  |  T\nT → num",
+                steps: [
+                    {
+                        desc: "<b>初始狀態：</b>我們需要解析算術運算式 <code>9 - 5 + 2</code>。因為 <code>+</code> 和 <code>-</code> 屬於左結合（Left-Associative）運算子，文法會透過左遞迴（Left-Recursion）結構來優先使左側的子表達式往更深的節點推導。現在開始逐步建構語法分析樹。",
+                        nodes: [
+                            { id: "e1", label: "E (根)", x: 250, y: 50, type: "nonterminal", active: true }
+                        ],
+                        edges: [],
+                        evalProcess: "尚未求值",
+                        evalResult: "-"
+                    },
+                    {
+                        desc: "<b>步驟 2 - 展開右側運算：</b>依據文法規則 <code>E → E + T</code>，我們將根節點 <code>E</code> 向下展開。右子樹將會承載 <code>+ 2</code>，而左側非終端節點 <code>E</code> 則預留給 <code>9 - 5</code> 這個待解析的子表達式。如此一來，<code>+ 2</code> 的計算將會排在後方。",
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 50, type: "nonterminal" },
+                            { id: "e2", label: "E", x: 150, y: 130, type: "nonterminal", active: true },
+                            { id: "op1", label: "+", x: 250, y: 130, type: "terminal", active: true },
+                            { id: "t1", label: "T", x: 350, y: 130, type: "nonterminal", active: true }
+                        ],
+                        edges: [
+                            { from: "e1", to: "e2" },
+                            { from: "e1", to: "op1" },
+                            { from: "e1", to: "t1" }
+                        ],
+                        evalProcess: "E(左) + T(右)",
+                        evalResult: "-"
+                    },
+                    {
+                        desc: "<b>步驟 3 - 展開左側子表達式：</b>此時，左下角的 <code>E</code> 節點需要解析剩下的 <code>9 - 5</code>。我們對其應用 <code>E → E - T</code> 規則。此展開方式使得 <code>-</code> 運算子的深度大於 <code>+</code> 運算子。在樹狀結構中，節點深度越深，表示其運算優先級越高，會先被計算。",
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 50, type: "nonterminal" },
+                            { id: "e2", label: "E", x: 150, y: 130, type: "nonterminal" },
+                            { id: "op1", label: "+", x: 250, y: 130, type: "terminal" },
+                            { id: "t1", label: "T", x: 350, y: 130, type: "nonterminal" },
+                            
+                            { id: "e3", label: "E", x: 80, y: 210, type: "nonterminal", active: true },
+                            { id: "op2", label: "-", x: 150, y: 210, type: "terminal", active: true },
+                            { id: "t2", label: "T", x: 220, y: 210, type: "nonterminal", active: true }
+                        ],
+                        edges: [
+                            { from: "e1", to: "e2" },
+                            { from: "e1", to: "op1" },
+                            { from: "e1", to: "t1" },
+                            { from: "e2", to: "e3" },
+                            { from: "e2", to: "op2" },
+                            { from: "e2", to: "t2" }
+                        ],
+                        evalProcess: "(E(左) - T(中)) + T(右)",
+                        evalResult: "-"
+                    },
+                    {
+                        desc: "<b>步驟 4 - 展開至終端符號：</b>我們將各個非終端節點 <code>E</code> 與 <code>T</code> 透過 <code>T → num</code> 及 <code>E → T</code> 規則，替換為具體的終端符號 <code>9</code>, <code>5</code>, <code>2</code>。至此，語法分析樹建構完成。所有的葉節點由左至右讀取剛好就是 <code>9 - 5 + 2</code>。",
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 50, type: "nonterminal" },
+                            { id: "e2", label: "E", x: 150, y: 130, type: "nonterminal" },
+                            { id: "op1", label: "+", x: 250, y: 130, type: "terminal" },
+                            { id: "t1", label: "2", x: 350, y: 130, type: "terminal", active: true },
+                            
+                            { id: "e3", label: "9", x: 80, y: 210, type: "terminal", active: true },
+                            { id: "op2", label: "-", x: 150, y: 210, type: "terminal" },
+                            { id: "t2", label: "5", x: 220, y: 210, type: "terminal", active: true }
+                        ],
+                        edges: [
+                            { from: "e1", to: "e2" },
+                            { from: "e1", to: "op1" },
+                            { from: "e1", to: "t1" },
+                            { from: "e2", to: "e3" },
+                            { from: "e2", to: "op2" },
+                            { from: "e2", to: "t2" }
+                        ],
+                        evalProcess: "(9 - 5) + 2",
+                        evalResult: "-"
+                    },
+                    {
+                        desc: "<b>步驟 5 - 由下至上求值 (Evaluation)：</b>求值會從樹的底端向上進行。最底層的子樹代表 <code>(9 - 5)</code>，會先被計算出結果 <code>4</code>（如高亮線段所示）。接著，上一層的 <code>+</code> 再將該子樹結果 <code>4</code> 與右側的 <code>2</code> 相加，最終得到正確結果 <code>6</code>。這正是左結合「先左後右」的語意表現。",
+                        nodes: [
+                            { id: "e1", label: "E = 6", x: 250, y: 50, type: "nonterminal", highlight: true },
+                            { id: "e2", label: "E = 4", x: 150, y: 130, type: "nonterminal", highlight: true },
+                            { id: "op1", label: "+", x: 250, y: 130, type: "terminal" },
+                            { id: "t1", label: "2", x: 350, y: 130, type: "terminal" },
+                            
+                            { id: "e3", label: "9", x: 80, y: 210, type: "terminal" },
+                            { id: "op2", label: "-", x: 150, y: 210, type: "terminal" },
+                            { id: "t2", label: "5", x: 220, y: 210, type: "terminal" }
+                        ],
+                        edges: [
+                            { from: "e1", to: "e2", highlight: true },
+                            { from: "e1", to: "op1", highlight: true },
+                            { from: "e1", to: "t1", highlight: true },
+                            { from: "e2", to: "e3", highlight: true },
+                            { from: "e2", to: "op2", highlight: true },
+                            { from: "e2", to: "t2", highlight: true }
+                        ],
+                        evalProcess: "(9 - 5) + 2  = 4 + 2",
+                        evalResult: "6"
+                    }
+                ]
+            },
+            right: {
+                title: "右結合演算演示：a = b = 3",
+                expression: "a = b = 3",
+                grammar: "R → letter = R  |  num\nletter → a | b",
+                steps: [
+                    {
+                        desc: "<b>初始狀態：</b>現在我們要解析右結合（Right-Associative）的賦值運算式 <code>a = b = 3</code>。右結合意味著右側的運算子必須先進行計算，這在文法上會透過右遞迴（Right-Recursion）結構來達成。我們從起始符號 <code>R</code> 開始建構分析樹。",
+                        nodes: [
+                            { id: "r1", label: "R (根)", x: 250, y: 50, type: "nonterminal", active: true }
+                        ],
+                        edges: [],
+                        evalProcess: "尚未求值",
+                        evalResult: "-"
+                    },
+                    {
+                        desc: "<b>步驟 2 - 展開左側變數：</b>依據右遞迴規則 <code>R → letter = R</code>，我們將根節點 <code>R</code> 展開。左側是代表變數的 <code>letter (a)</code>，中間是指定運算子 <code>=</code>，而右側則留下另一個非終端符號 <code>R</code>，代表更深層的賦值將在右邊發生。",
+                        nodes: [
+                            { id: "r1", label: "R", x: 250, y: 50, type: "nonterminal" },
+                            { id: "let1", label: "letter", x: 150, y: 130, type: "nonterminal", active: true },
+                            { id: "op1", label: "=", x: 250, y: 130, type: "terminal", active: true },
+                            { id: "r2", label: "R", x: 350, y: 130, type: "nonterminal", active: true }
+                        ],
+                        edges: [
+                            { from: "r1", to: "let1" },
+                            { from: "r1", to: "op1" },
+                            { from: "r1", to: "r2" }
+                        ],
+                        evalProcess: "letter(a) = R(右)",
+                        evalResult: "-"
+                    },
+                    {
+                        desc: "<b>步驟 3 - 展開右側子表達式：</b>為了接續處理剩餘字串 <code>b = 3</code>，我們再次將右側的 <code>R</code> 節點展開，套用相同的規則 <code>R → letter = R</code>。這使得第二個賦值動作 <code>=</code> 被推導到樹中更深、更低的層級，從而獲得了比左側第一個賦值動作更高的優先執行權。",
+                        nodes: [
+                            { id: "r1", label: "R", x: 250, y: 50, type: "nonterminal" },
+                            { id: "let1", label: "letter", x: 150, y: 130, type: "nonterminal" },
+                            { id: "op1", label: "=", x: 250, y: 130, type: "terminal" },
+                            { id: "r2", label: "R", x: 350, y: 130, type: "nonterminal" },
+                            
+                            { id: "let2", label: "letter", x: 280, y: 210, type: "nonterminal", active: true },
+                            { id: "op2", label: "=", x: 350, y: 210, type: "terminal", active: true },
+                            { id: "r3", label: "R", x: 420, y: 210, type: "nonterminal", active: true }
+                        ],
+                        edges: [
+                            { from: "r1", to: "let1" },
+                            { from: "r1", to: "op1" },
+                            { from: "r1", to: "r2" },
+                            { from: "r2", to: "let2" },
+                            { from: "r2", to: "op2" },
+                            { from: "r2", to: "r3" }
+                        ],
+                        evalProcess: "letter(a) = (letter(b) = R(右))",
+                        evalResult: "-"
+                    },
+                    {
+                        desc: "<b>步驟 4 - 展開至終端符號：</b>最後將非終端符號 <code>letter</code> 與底部的 <code>R</code> 解析為具體的終端符號（<code>a</code>, <code>b</code> 和 <code>3</code>）。這時由左至右順序讀取葉節點，剛好得到 <code>a = b = 3</code>。語法分析樹的建構宣告完成。",
+                        nodes: [
+                            { id: "r1", label: "R", x: 250, y: 50, type: "nonterminal" },
+                            { id: "let1", label: "a", x: 150, y: 130, type: "terminal", active: true },
+                            { id: "op1", label: "=", x: 250, y: 130, type: "terminal" },
+                            { id: "r2", label: "R", x: 350, y: 130, type: "nonterminal" },
+                            
+                            { id: "let2", label: "b", x: 280, y: 210, type: "terminal", active: true },
+                            { id: "op2", label: "=", x: 350, y: 210, type: "terminal" },
+                            { id: "r3", label: "3", x: 420, y: 210, type: "terminal", active: true }
+                        ],
+                        edges: [
+                            { from: "r1", to: "let1" },
+                            { from: "r1", to: "op1" },
+                            { from: "r1", to: "r2" },
+                            { from: "r2", to: "let2" },
+                            { from: "r2", to: "op2" },
+                            { from: "r2", to: "r3" }
+                        ],
+                        evalProcess: "a = (b = 3)",
+                        evalResult: "-"
+                    },
+                    {
+                        desc: "<b>步驟 5 - 由下至上求值 (Evaluation)：</b>根據樹狀結構進行後序求值，底層最深的子樹 <code>b = 3</code> 會最先被執行，將數值 3 指派給變數 <code>b</code>（返回 3 ）。隨後，該結果再傳遞給上一層，進行 <code>a = 3</code> 的指派。這種由右向左的求值順序即為右結合律的語意表現。",
+                        nodes: [
+                            { id: "r1", label: "R = 3", x: 250, y: 50, type: "nonterminal", highlight: true },
+                            { id: "let1", label: "a", x: 150, y: 130, type: "terminal" },
+                            { id: "op1", label: "=", x: 250, y: 130, type: "terminal" },
+                            { id: "r2", label: "R = 3", x: 350, y: 130, type: "nonterminal", highlight: true },
+                            
+                            { id: "let2", label: "b", x: 280, y: 210, type: "terminal" },
+                            { id: "op2", label: "=", x: 350, y: 210, type: "terminal" },
+                            { id: "r3", label: "3", x: 420, y: 210, type: "terminal" }
+                        ],
+                        edges: [
+                            { from: "r1", to: "let1", highlight: true },
+                            { from: "r1", to: "op1", highlight: true },
+                            { from: "r1", to: "r2", highlight: true },
+                            { from: "r2", to: "let2", highlight: true },
+                            { from: "r2", to: "op2", highlight: true },
+                            { from: "r2", to: "r3", highlight: true }
+                        ],
+                        evalProcess: "a = (b = 3)  →  a = 3",
+                        evalResult: "3 (變數a與b皆成功指派為3)"
+                    }
+                ]
+            }
+        };
+
+        let currentMode = 'left';
+        let currentStepIndex = 0;
+
+        // 初始化演示
+        function initDemo() {
+            currentStepIndex = 0;
+            renderStep();
+        }
+
+        // 切換模式 (左結合 vs 右結合)
+        function selectMode(mode) {
+            if (currentMode === mode) return;
+            currentMode = mode;
+            
+            // 更新按鈕樣式
+            const leftBtn = document.getElementById('btn-left-assoc');
+            const rightBtn = document.getElementById('btn-right-assoc');
+            
+            if (mode === 'left') {
+                leftBtn.className = "flex items-center justify-center gap-2 py-3 px-4 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-blue-600 bg-blue-50 text-blue-700";
+                rightBtn.className = "flex items-center justify-center gap-2 py-3 px-4 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-slate-200 text-slate-600 hover:bg-slate-50";
+            } else {
+                rightBtn.className = "flex items-center justify-center gap-2 py-3 px-4 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-blue-600 bg-blue-50 text-blue-700";
+                leftBtn.className = "flex items-center justify-center gap-2 py-3 px-4 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-slate-200 text-slate-600 hover:bg-slate-50";
+            }
+
+            initDemo();
+        }
+
+        // 渲染指定步驟
+        function renderStep() {
+            const data = demoData[currentMode];
+            const step = data.steps[currentStepIndex];
+            const totalSteps = data.steps.length;
+
+            // 1. 更新文字面板資訊
+            document.getElementById('panel-title').textContent = data.title;
+            document.getElementById('step-badge').textContent = `步驟 ${currentStepIndex + 1} / ${totalSteps}`;
+            document.getElementById('grammar-rules').innerHTML = data.grammar.replace(/\n/g, '<br>');
+            document.getElementById('step-desc').innerHTML = step.desc;
+            document.getElementById('current-expr-str').textContent = data.expression;
+            document.getElementById('eval-process').textContent = step.evalProcess;
+            document.getElementById('eval-result').textContent = step.evalResult;
+
+            // 2. 控制按鈕狀態
+            const prevBtn = document.getElementById('btn-prev');
+            const nextBtn = document.getElementById('btn-next');
+
+            if (currentStepIndex === 0) {
+                prevBtn.disabled = true;
+                prevBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200";
+            } else {
+                prevBtn.disabled = false;
+                prevBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200";
+            }
+
+            if (currentStepIndex === totalSteps - 1) {
+                nextBtn.disabled = true;
+                nextBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-slate-200 text-slate-400 text-sm font-medium cursor-not-allowed transition-all duration-200";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm";
+            }
+
+            // 3. 畫布圖形渲染
+            renderCanvas(step);
+        }
+
+        // SVG 圖形繪製邏輯
+        function renderCanvas(step) {
+            const svg = document.getElementById('tree-svg');
+            svg.innerHTML = ''; // 清空畫布
+
+            // 定義連線漸層與箭頭等（此處使用平面風格連線，無需複雜 marker）
+            const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+            svg.appendChild(defs);
+
+            // 1. 先繪製連線（Edges），以便讓節點蓋在連線上方
+            step.edges.forEach(edge => {
+                const fromNode = step.nodes.find(n => n.id === edge.from);
+                const toNode = step.nodes.find(n => n.id === edge.to);
+                
+                if (fromNode && toNode) {
+                    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    line.setAttribute("x1", fromNode.x);
+                    line.setAttribute("y1", fromNode.y);
+                    line.setAttribute("x2", toNode.x);
+                    line.setAttribute("y2", toNode.y);
+                    
+                    if (edge.highlight) {
+                        line.setAttribute("class", "highlight-edge");
+                    } else {
+                        line.setAttribute("stroke", "#cbd5e1");
+                        line.setAttribute("stroke-width", "2");
+                    }
+                    svg.appendChild(line);
+                }
+            });
+
+            // 2. 繪製節點（Nodes）
+            step.nodes.forEach(node => {
+                const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                group.setAttribute("class", "tree-node");
+
+                // 決定節點樣式
+                let rectColor = "#ffffff";
+                let strokeColor = "#64748b";
+                let strokeWidth = "1.5";
+                let textColor = "#0f172a";
+                let fontWeight = "normal";
+
+                if (node.type === "terminal") {
+                    // 終端節點（葉節點）：採用實體平面灰色或藍色背景
+                    rectColor = "#f1f5f9";
+                    strokeColor = "#94a3b8";
+                    fontWeight = "bold";
+                    if (node.active) {
+                        rectColor = "#dbeafe";
+                        strokeColor = "#3b82f6";
+                        textColor = "#1d4ed8";
+                    }
+                } else {
+                    // 非終端節點（內部節點）
+                    rectColor = "#ffffff";
+                    strokeColor = "#64748b";
+                    if (node.active) {
+                        strokeColor = "#3b82f6";
+                        strokeWidth = "2.5";
+                        textColor = "#2563eb";
+                        fontWeight = "bold";
+                    }
+                    if (node.highlight) {
+                        rectColor = "#eff6ff";
+                        strokeColor = "#2563eb";
+                        strokeWidth = "2.5";
+                        textColor = "#1e40af";
+                        fontWeight = "bold";
+                    }
+                }
+
+                // 繪製圓角矩形容器
+                const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                const rectWidth = 72;
+                const rectHeight = 36;
+                rect.setAttribute("x", node.x - rectWidth / 2);
+                rect.setAttribute("y", node.y - rectHeight / 2);
+                rect.setAttribute("width", rectWidth);
+                rect.setAttribute("height", rectHeight);
+                rect.setAttribute("rx", "6"); // 圓角外觀
+                rect.setAttribute("fill", rectColor);
+                rect.setAttribute("stroke", strokeColor);
+                rect.setAttribute("stroke-width", strokeWidth);
+                group.appendChild(rect);
+
+                // 繪製文字
+                const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                text.setAttribute("x", node.x);
+                text.setAttribute("y", node.y + 4); // 垂直微調置中
+                text.setAttribute("text-anchor", "middle");
+                text.setAttribute("fill", textColor);
+                text.setAttribute("font-size", "13px");
+                text.setAttribute("font-family", "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace");
+                text.setAttribute("font-weight", fontWeight);
+                text.textContent = node.label;
+                group.appendChild(text);
+
+                svg.appendChild(group);
+            });
+        }
+
+        // 向後操作一步
+        function nextStep() {
+            const data = demoData[currentMode];
+            if (currentStepIndex < data.steps.length - 1) {
+                currentStepIndex++;
+                renderStep();
+            }
+        }
+
+        // 向前操作一步
+        function prevStep() {
+            if (currentStepIndex > 0) {
+                currentStepIndex--;
+                renderStep();
+            }
+        }
+
+        // 重置演示
+        function resetDemo() {
+            initDemo();
+        }
+
+        // 頁面初始化
+        window.onload = function() {
+            initDemo();
+        };
+    </script>
+</body>
+</html>
