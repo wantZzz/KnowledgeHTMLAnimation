@@ -1,0 +1,893 @@
+---
+layout: null
+title: "[Chapter 2.4] 預測/非預測分析"
+description: "模擬預測/非預測分析兩種狀態下語法樹的建構過程"
+role: "primary"
+related: []
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>由上而下語法分析與預測/非預測分析對比演示</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .tree-node {
+            transition: all 0.5s ease-in-out;
+        }
+        .highlight-line {
+            stroke: #4f46e5;
+            stroke-width: 2.5;
+            stroke-dasharray: 4;
+            animation: dash-flow 1.5s linear infinite;
+        }
+        @keyframes dash-flow {
+            to {
+                stroke-dashoffset: -20;
+            }
+        }
+        .token-slide {
+            transition: all 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col justify-between">
+
+    <!-- 頁首 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <h1 class="text-xl font-bold tracking-tight text-slate-900">編譯器設計：由上而下分析與預測/非預測對比（Top-Down Parsing & Backtracking）</h1>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-mono">Chapter 2.4 Parsing</span>
+        </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
+        
+        <!-- 左側控制面板與說明 -->
+        <section class="lg:col-span-5 flex flex-col gap-4">
+            
+            <!-- 模式選擇切換區 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 font-mono">請選擇語法分析模式</h2>
+                <div class="grid grid-cols-2 gap-2">
+                    <button id="btn-mode-predictive" onclick="selectMode('predictive')" class="flex flex-col items-center justify-center p-3 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-indigo-600 bg-indigo-50 text-indigo-700">
+                        <span class="font-bold text-sm">預測分析法</span>
+                        <span class="text-[10px] text-indigo-500 mt-1 font-mono">Predictive (No Backtrack)</span>
+                    </button>
+                    <button id="btn-mode-backtrack" onclick="selectMode('backtrack')" class="flex flex-col items-center justify-center p-3 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-slate-200 text-slate-600 hover:bg-slate-50">
+                        <span class="font-bold text-sm">非預測分析法</span>
+                        <span class="text-[10px] text-slate-500 mt-1 font-mono">Non-Predictive (Backtracking)</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 說明與步驟面板 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex-grow flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-bold text-slate-900 text-base" id="panel-title">分析推導步驟</h3>
+                        <span id="step-badge" class="text-xs bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded font-mono">步驟 1 / 9</span>
+                    </div>
+                    
+                    <!-- 文法定義區 -->
+                    <div id="grammar-box" class="bg-slate-50 p-3 rounded-lg border border-slate-100 mb-4 font-mono text-xs text-slate-600">
+                        <div class="font-bold text-slate-700 mb-1.5" id="grammar-title">消除左遞迴文法 (Non-Left-Recursive Grammar)：</div>
+                        <div class="space-y-0.5" id="grammar-rules">
+                            <!-- 動態替換文法規則 -->
+                        </div>
+                    </div>
+
+                    <!-- 步驟描述文字 -->
+                    <div class="prose prose-sm text-slate-600 leading-relaxed min-h-[140px]" id="step-desc">
+                        載入中...
+                    </div>
+                </div>
+
+                <!-- 語法決策分析面板 -->
+                <div class="mt-4 p-4 bg-indigo-50/50 rounded-lg border border-indigo-100 text-xs">
+                    <h4 class="font-bold text-indigo-950 mb-2 flex items-center gap-1">
+                        <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        語法分析決策資訊 (Parsing Decision)
+                    </h4>
+                    <div class="space-y-1.5 text-slate-700 font-mono">
+                        <div class="flex justify-between">
+                            <span>當前預看符號 (Lookahead):</span>
+                            <span id="decision-lookahead" class="font-bold text-indigo-700">-</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>嘗試/觸發產生式 (Rule):</span>
+                            <span id="decision-rule" class="font-bold text-emerald-700">-</span>
+                        </div>
+                        <div class="flex justify-between" id="backtrack-status-row" style="display: none;">
+                            <span>回溯旗標 (Backtracking):</span>
+                            <span id="backtrack-flag" class="font-bold text-red-600">否</span>
+                        </div>
+                        <div class="border-t border-indigo-100/60 my-1"></div>
+                        <div>
+                            <span class="text-slate-500 block mb-0.5">學術技術解析:</span>
+                            <p id="decision-judgment" class="text-slate-600 font-sans leading-normal">無</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 限制的一至兩個可互動元素 -->
+                <div class="border-t border-slate-100 pt-4 mt-6 flex items-center justify-between gap-3">
+                    <button id="btn-prev" onclick="prevStep()" class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200" disabled>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+                        </svg>
+                        上一步 (Prev)
+                    </button>
+                    <button id="btn-next" onclick="nextStep()" class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-all duration-200 shadow-sm">
+                        下一步 (Next)
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 分析器內部虛擬堆疊狀態 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h3 class="font-bold text-slate-900 text-sm mb-3">語法分析器內部符號堆疊 (Parsing Stack)</h3>
+                <div class="flex items-center gap-2 overflow-x-auto py-1" id="stack-container">
+                    <!-- 動態渲染堆疊狀態 -->
+                </div>
+            </div>
+
+        </section>
+
+        <!-- 右側視覺化畫布 -->
+        <section class="lg:col-span-7 bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+            <div class="flex flex-col gap-3 mb-4 border-b border-slate-100 pb-3">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                        </svg>
+                        <span class="font-bold text-slate-900 text-sm">詞彙分析與由上而下推導樹</span>
+                    </div>
+                    <button onclick="resetDemo()" class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H17"/>
+                        </svg>
+                        重置演示
+                    </button>
+                </div>
+
+                <!-- 詞彙分析掃描暫存器 -->
+                <div class="bg-slate-100 p-3 rounded-lg border border-slate-200">
+                    <div class="flex items-center justify-between text-xs text-slate-500 mb-1.5 font-semibold">
+                        <span>詞彙分析器 Token 串流暫存器 (Token Buffer)</span>
+                        <span id="scan-status" class="text-indigo-600 font-mono">狀態: 掃描中</span>
+                    </div>
+                    <div class="flex items-center gap-2 font-mono" id="token-stream-container">
+                        <!-- 動態渲染 Token -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- SVG 語法分析樹畫布 -->
+            <div class="relative w-full bg-slate-50 rounded-lg border border-slate-100 overflow-hidden flex items-center justify-center min-h-[440px]" id="canvas-container">
+                <svg id="tree-svg" class="w-full h-[440px]" viewBox="0 0 500 420">
+                    <!-- 動態渲染分析樹節點與推導連線 -->
+                </svg>
+            </div>
+            
+            <div class="mt-3 text-xs text-slate-400 flex items-center gap-1">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <span>說明：內部節點代表非終端符號，實色葉節點代表已完成與輸入流比對匹配的終端符號。</span>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 頁尾 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500">
+        <div class="max-w-7xl mx-auto">
+             編譯器設計課程教材輔助軟體 - 由上而下分析與預測/非預測分析對比
+        </div>
+    </footer>
+
+    <script>
+        // 二合一數據資料庫
+        const parsingModes = {
+            predictive: {
+                title: "預測分析法演示 (輸入: id + id)",
+                expression: "id + id",
+                tokens: ["id", "+", "id", "EOF"],
+                grammarTitle: "消除左遞迴文法 (Non-Left-Recursive Grammar)：",
+                grammarRules: [
+                    "E → T E'  <span class='text-slate-400'>（E 展開為項與表達式餘項）</span>",
+                    "E' → + T E' | ε  <span class='text-slate-400'>（E' 處理加法尾隨或消去）</span>",
+                    "T → id  <span class='text-slate-400'>（T 直接匹配識別碼）</span>"
+                ],
+                steps: [
+                    {
+                        desc: "<b>初始狀態：</b>語法分析器啟動。在<b>由上而下分析（Top-Down Parsing）</b>中，建構起點必為文法的<b>開始符號（Start Symbol）</b>，此處即為非終端符號 <code>E</code>。此時讀入的第一個預看符號為 <code>id</code>。",
+                        lookaheadIdx: 0,
+                        lookaheadText: "id",
+                        triggeredRule: "E (開始符號初始化)",
+                        judgment: "分析器初始置入開始符號 E。由於 E 為非終端符號，必須被展開。目前無推導歷史，堆疊僅含有起始狀態符號 E 與底端結束標記 $。",
+                        stack: ["E", "$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 50, type: "nonterminal", active: true }
+                        ],
+                        edges: []
+                    },
+                    {
+                        desc: "<b>步驟 2 - 根節點展開：</b>分析器預看符號為 <code>id</code>。根據<b>預測分析法（Predictive Parsing）</b>，由於 <code>id</code> 屬於第一條產生式的 <b>FIRST 集合</b>（即 $\\text{FIRST}(T\\ E') = \\{\\text{id}\\}$），分析器在不需回溯的情況下，唯一決定套用規則 <code>E → T E'</code>。",
+                        lookaheadIdx: 0,
+                        lookaheadText: "id",
+                        triggeredRule: "E → T E'",
+                        judgment: "依據預看符號 id，Parser 檢索預測分析表並判定 id 屬於 FIRST(T E')。於是將 E 展開。在堆疊中，E 被彈出並由其右側產生式主體 T 與 E' 依序壓入，最左非終端符號 T 置於堆疊頂端。",
+                        stack: ["T", "E'", "$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 50, type: "nonterminal" },
+                            { id: "t1", label: "T", x: 180, y: 140, type: "nonterminal", active: true },
+                            { id: "ep1", label: "E'", x: 320, y: 140, type: "nonterminal" }
+                        ],
+                        edges: [
+                            { from: "e1", to: "t1" },
+                            { from: "e1", to: "ep1" }
+                        ]
+                    },
+                    {
+                        desc: "<b>步驟 3 - 展開最左非終端符號：</b>分析器聚焦在最左側的非終端符號 <code>T</code>（符合<b>最左推導 leftmost derivation</b> 定義）。此時預看符號仍為 <code>id</code>。由於 $\\text{FIRST}(\\text{id}) = \\{\\text{id}\\}$，分析器決定套用產生式 <code>T → id</code>。",
+                        lookaheadIdx: 0,
+                        lookaheadText: "id",
+                        triggeredRule: "T → id",
+                        judgment: "當前堆疊頂端非終端符號為 T。預看符號為 id，屬於 FIRST(id)。套用 T → id。堆疊彈出 T，並壓入終端符號 id。此時堆疊頂端變為終端符號 id，準備與輸入串流進行比對。",
+                        stack: ["id", "E'", "$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 50, type: "nonterminal" },
+                            { id: "t1", label: "T", x: 180, y: 140, type: "nonterminal" },
+                            { id: "ep1", label: "E'", x: 320, y: 140, type: "nonterminal" },
+                            { id: "id1", label: "id", x: 180, y: 230, type: "terminal", active: true }
+                        ],
+                        edges: [
+                            { from: "e1", to: "t1" },
+                            { from: "e1", to: "ep1" },
+                            { from: "t1", to: "id1" }
+                        ]
+                    },
+                    {
+                        desc: "<b>步驟 4 - 終端符號匹配：</b>此時堆疊頂端的符號與預看符號皆為 <code>id</code>。分析器執行 <code>match(id)</code>，成功完成<b>終端符號比對（Terminal Matching）</b>。輸入流指針向右滑動，預看符號更新為 <code>+</code>。",
+                        lookaheadIdx: 1,
+                        lookaheadText: "+",
+                        triggeredRule: "match(id)",
+                        judgment: "堆疊頂端的終端符號與輸入流當前的 Lookahead 完全匹配。執行彈出（Pop）堆疊頂端 id 的動作，且輸入流讀取指針移向下一個 Token '+'。目前堆疊頂端變為非終端符號 E'。",
+                        stack: ["E'", "$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 50, type: "nonterminal" },
+                            { id: "t1", label: "T", x: 180, y: 140, type: "nonterminal" },
+                            { id: "ep1", label: "E'", x: 320, y: 140, type: "nonterminal", active: true },
+                            { id: "id1", label: "id", x: 180, y: 230, type: "terminal", match: true }
+                        ],
+                        edges: [
+                            { from: "e1", to: "t1" },
+                            { from: "e1", to: "ep1" },
+                            { from: "t1", to: "id1" }
+                        ]
+                    },
+                    {
+                        desc: "<b>步驟 5 - 展開加法餘項：</b>當前聚焦的非終端符號為 <code>E'</code>，此時預看符號為 <code>+</code>。由於 <code>+</code> 屬於第一條右遞迴候選規則的 FIRST 集合（即 $\\text{FIRST}(+ T\\ E') = \\{\\text{+}\\}$），分析器套用規則 <code>E' → + T E'</code>，向下建立加法分支。",
+                        lookaheadIdx: 1,
+                        lookaheadText: "+",
+                        triggeredRule: "E' → + T E'",
+                        judgment: "Lookahead 為 '+'。因 '+' 屬於 FIRST(+ T E') 集合，Parser 觸發該產生式。堆疊彈出 E'，並將其右側符號體以相反順序 E', T, '+' 壓入堆疊，最左側的 '+' 處於堆疊頂端。",
+                        stack: ["+", "T", "E'", "$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 50, type: "nonterminal" },
+                            { id: "t1", label: "T", x: 180, y: 140, type: "nonterminal" },
+                            { id: "ep1", label: "E'", x: 320, y: 140, type: "nonterminal" },
+                            { id: "id1", label: "id", x: 180, y: 230, type: "terminal", match: true },
+                            
+                    { id: "op_plus", label: "+", x: 270, y: 230, type: "terminal", active: true },
+                            { id: "t2", label: "T", x: 340, y: 230, type: "nonterminal" },
+                            { id: "ep2", label: "E'", x: 410, y: 230, type: "nonterminal" }
+                        ],
+                        edges: [
+                            { from: "e1", to: "t1" }, { from: "e1", to: "ep1" }, { from: "t1", to: "id1" },
+                            { from: "ep1", to: "op_plus" }, { from: "ep1", to: "t2" }, { from: "ep1", to: "ep2" }
+                        ]
+                    },
+                    {
+                        desc: "<b>步驟 6 - 匹配加法運算子：</b>堆疊頂端符號與預看符號均為 <code>+</code>。分析器執行 <code>match(+)</code>。<b>詞彙分析掃描器</b>的預看指針再次向右移動，讀入下一個預看符號 <code>id</code>。焦點轉向最左側非終端符號 <code>T</code>。",
+                        lookaheadIdx: 2,
+                        lookaheadText: "id",
+                        triggeredRule: "match(+)",
+                        judgment: "堆疊頂端 '+' 與輸入符號匹配。執行彈出。輸入流移向第二個 id。此時堆疊頂端為非終端符號 T，Parser 需對其進行下一步的推導選擇。",
+                        stack: ["T", "E'", "$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 50, type: "nonterminal" },
+                            { id: "t1", label: "T", x: 180, y: 140, type: "nonterminal" },
+                            { id: "ep1", label: "E'", x: 320, y: 140, type: "nonterminal" },
+                            { id: "id1", label: "id", x: 180, y: 230, type: "terminal", match: true },
+                            
+                    { id: "op_plus", label: "+", x: 270, y: 230, type: "terminal", match: true },
+                            { id: "t2", label: "T", x: 340, y: 230, type: "nonterminal", active: true },
+                            { id: "ep2", label: "E'", x: 410, y: 230, type: "nonterminal" }
+                        ],
+                        edges: [
+                            { from: "e1", to: "t1" }, { from: "e1", to: "ep1" }, { from: "t1", to: "id1" },
+                            { from: "ep1", to: "op_plus" }, { from: "ep1", to: "t2" }, { from: "ep1", to: "ep2" }
+                        ]
+                    },
+                    {
+                        desc: "<b>步驟 7 - 展開與匹配第二個常數：</b>非終端符號 <code>T</code> 預看符號為 <code>id</code>。分析器套用 <code>T → id</code> 規則展開，隨後立即與預看符號 <code>id</code> 匹配並執行 <code>match(id)</code>。預看指針移向算式尾端的結束符號 <code>EOF ($)</code>。",
+                        lookaheadIdx: 3,
+                        lookaheadText: "EOF",
+                        triggeredRule: "T → id 且 match(id)",
+                        judgment: "非終端符號 T 展開為 id，隨即與輸入中的 id 完成匹配。堆疊彈出 T（因匹配成功），預看指針更新至結尾。當前堆疊頂端僅剩下表達式餘項 E' 與底端標記 $。",
+                        stack: ["E'", "$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 50, type: "nonterminal" },
+                            { id: "t1", label: "T", x: 180, y: 140, type: "nonterminal" },
+                            { id: "ep1", label: "E'", x: 320, y: 140, type: "nonterminal" },
+                            { id: "id1", label: "id", x: 180, y: 230, type: "terminal", match: true },
+                            
+                    { id: "op_plus", label: "+", x: 270, y: 230, type: "terminal", match: true },
+                            { id: "t2", label: "T", x: 340, y: 230, type: "nonterminal" },
+                            { id: "ep2", label: "E'", x: 410, y: 230, type: "nonterminal", active: true },
+                            { id: "id2", label: "id", x: 340, y: 310, type: "terminal", match: true }
+                        ],
+                        edges: [
+                            { from: "e1", to: "t1" }, { from: "e1", to: "ep1" }, { from: "t1", to: "id1" },
+                            { from: "ep1", to: "op_plus" }, { from: "ep1", to: "t2" }, { from: "ep1", to: "ep2" },
+                            { from: "t2", to: "id2" }
+                        ]
+                    },
+                    {
+                        desc: "<b>步驟 8 - 套用空字串消去規則：</b>此時堆疊頂端為非終端符號 <code>E'</code>，而預看符號為結束符號 <code>EOF</code>。由於 <code>EOF</code> 不屬於任何非空產生式，分析器選擇其<b>預設路徑（Default Path）</b>，套用 <b>$\\epsilon$-產生式</b> <code>E' → ε</code> 將其從樹中消去。",
+                        lookaheadIdx: 4,
+                        lookaheadText: "EOF",
+                        triggeredRule: "E' → ε",
+                        judgment: "當前預看符號為 EOF，與任何含有實際運算子的分支均不匹配。分析器依據預設路徑套用 E' → ε。堆疊彈出 E'，不壓入任何新符號，相當於完成了剩餘變數的消去（Nullification）。",
+                        stack: ["$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 50, type: "nonterminal" },
+                            { id: "t1", label: "T", x: 180, y: 140, type: "nonterminal" },
+                            { id: "ep1", label: "E'", x: 320, y: 140, type: "nonterminal" },
+                            { id: "id1", label: "id", x: 180, y: 230, type: "terminal", match: true },
+                            
+                    { id: "op_plus", label: "+", x: 270, y: 230, type: "terminal", match: true },
+                            { id: "t2", label: "T", x: 340, y: 230, type: "nonterminal" },
+                            { id: "ep2", label: "E'", x: 410, y: 230, type: "nonterminal" },
+                            { id: "id2", label: "id", x: 340, y: 310, type: "terminal", match: true },
+                            { id: "eps1", label: "ε", x: 410, y: 310, type: "terminal", active: true }
+                        ],
+                        edges: [
+                            { from: "e1", to: "t1" }, { from: "e1", to: "ep1" }, { from: "t1", to: "id1" },
+                            { from: "ep1", to: "op_plus" }, { from: "ep1", to: "t2" }, { from: "ep1", to: "ep2" },
+                            { from: "t2", to: "id2" }, { from: "ep2", to: "eps1" }
+                        ]
+                    },
+                    {
+                        desc: "<b>步驟 9 - 語法分析圓滿完成：</b>此時堆疊中僅剩下結束標記符號 <code>$</code>，而輸入流亦匹配至 <code>EOF</code>。兩端成功匹配，宣告整個輸入算式 <code>id + id</code> 符合文法結構定義，語法樹建構成功並順利<b>接受（Accept）</b>。",
+                        lookaheadIdx: 4,
+                        lookaheadText: "EOF",
+                        triggeredRule: "語法分析成功接受",
+                        judgment: "堆疊底層結束標籤 $ 與輸入流的 EOF 完全契合。表示在無回溯的情況下，自上而下的最左推導順利結束。此分析樹結構正確可靠，可直接進入語義翻譯階段。",
+                        stack: ["$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 50, type: "nonterminal", highlight: true },
+                            { id: "t1", label: "T", x: 180, y: 140, type: "nonterminal", highlight: true },
+                            { id: "ep1", label: "E'", x: 320, y: 140, type: "nonterminal", highlight: true },
+                            { id: "id1", label: "id", x: 180, y: 230, type: "terminal", match: true, highlight: true },
+                            
+                    { id: "op_plus", label: "+", x: 270, y: 230, type: "terminal", match: true, highlight: true },
+                            { id: "t2", label: "T", x: 340, y: 230, type: "nonterminal", highlight: true },
+                            { id: "ep2", label: "E'", x: 410, y: 230, type: "nonterminal", highlight: true },
+                            { id: "id2", label: "id", x: 340, y: 310, type: "terminal", match: true, highlight: true },
+                            { id: "eps1", label: "ε", x: 410, y: 310, type: "terminal", highlight: true }
+                        ],
+                        edges: [
+                            { from: "e1", to: "t1", highlight: true }, { from: "e1", to: "ep1", highlight: true }, { from: "t1", to: "id1", highlight: true },
+                            { from: "ep1", to: "op_plus", highlight: true }, { from: "ep1", to: "t2", highlight: true }, { from: "ep1", to: "ep2", highlight: true },
+                            { from: "t2", to: "id2", highlight: true }, { from: "ep2", to: "eps1", highlight: true }
+                        ]
+                    }
+                ]
+            },
+            backtrack: {
+                title: "非預測分析與回溯演示 (輸入: a c)",
+                expression: "a c",
+                tokens: ["a", "c", "EOF"],
+                grammarTitle: "二義/含有共同前綴之文法 (Grammar with Backtracking)：",
+                grammarRules: [
+                    "S → a b  <span class='text-slate-400'>（規則 1）</span>",
+                    "S → a c  <span class='text-slate-400'>（規則 2）</span>"
+                ],
+                steps: [
+                    {
+                        desc: "<b>初始狀態：</b>語法分析器啟動，目標解析字串 <code>a c</code>。在<b>非預測分析法（Non-Predictive Parsing）</b>中，分析器缺乏 Lookahead 預看機制的引導。首先在語法樹根部置入<b>開始符號（Start Symbol）</b> <code>S</code>。堆疊中為開始符號 <code>S</code>。",
+                        lookaheadIdx: 0,
+                        lookaheadText: "a",
+                        triggeredRule: "S (開始符號初始化)",
+                        judgment: "開始解析。由於不具備預測能力（不進行 Lookahead 判斷），分析器只能依照文法定義，盲目嘗試第一條規則（規則 1：S → a b）。",
+                        stack: ["S", "$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "s1", label: "S", x: 250, y: 50, type: "nonterminal", active: true }
+                        ],
+                        edges: []
+                    },
+                    {
+                        desc: "<b>步驟 2 - 盲目套用第一條規則：</b>在無預測決策下，分析器嘗試第一個<b>備選路徑（Alternative Path）</b>，套用產生式 <code>S → a b</code>，將子節點 <code>a</code> 與 <code>b</code> 置入分析樹中，此時堆疊更新為 <code>[a, b, $]</code>。",
+                        lookaheadIdx: 0,
+                        lookaheadText: "a",
+                        triggeredRule: "嘗試套用 S → a b",
+                        judgment: "沒有 FIRST 集合的約束，Parser 直接套用最先遇到的 S → a b 規則。堆疊彈出 S 壓入 b、a。此時焦點指向最左側終端符號 a，Lookahead 符號為 a。",
+                        stack: ["a", "b", "$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "s1", label: "S", x: 250, y: 50, type: "nonterminal" },
+                            { id: "a1", label: "a", x: 180, y: 150, type: "terminal", active: true },
+                            { id: "b1", label: "b", x: 320, y: 150, type: "terminal" }
+                        ],
+                        edges: [
+                            { from: "s1", to: "a1" },
+                            { from: "s1", to: "b1" }
+                        ]
+                    },
+                    {
+                        desc: "<b>步驟 3 - 匹配第一個終端符號：</b>堆疊頂端符號為 <code>a</code>，Lookahead 亦為 <code>a</code>。兩者符合，分析器執行 <code>match(a)</code>。輸入串流的讀取指針向右滑動，預看符號更新為 <code>c</code>。",
+                        lookaheadIdx: 1,
+                        lookaheadText: "c",
+                        triggeredRule: "match(a)",
+                        judgment: "堆疊頂部的終端符號 a 與輸入流比對相符。將其彈出堆疊，並將 Token 指針移向字元 'c'。目前堆疊頂端變為終端符號 b。",
+                        stack: ["b", "$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "s1", label: "S", x: 250, y: 50, type: "nonterminal" },
+                            { id: "a1", label: "a", x: 180, y: 150, type: "terminal", match: true },
+                            { id: "b1", label: "b", x: 320, y: 150, type: "terminal", active: true }
+                        ],
+                        edges: [
+                            { from: "s1", to: "a1" },
+                            { from: "s1", to: "b1" }
+                        ]
+                    },
+                    {
+                        desc: "<b>步驟 4 - 比對失敗：</b>當前堆疊頂端為 <code>b</code>，但輸入流中的預看符號為 <code>c</code>。發生<b>比對失敗（Mismatch）</b>！分析器無法繼續前進，必須宣告當前的規則分支無效，準備進行回溯。",
+                        lookaheadIdx: 1,
+                        lookaheadText: "c",
+                        triggeredRule: "match(b) 失敗",
+                        judgment: "極具關鍵的失敗點。堆疊頂端 b 與 Lookahead 'c' 不相符，比對宣告失敗。這印證了非預測分析在遇到共同前綴（如 a）時，極易盲目踏入錯誤的分支。",
+                        stack: ["b", "$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "s1", label: "S", x: 250, y: 50, type: "nonterminal" },
+                            { id: "a1", label: "a", x: 180, y: 150, type: "terminal", match: true },
+                            { id: "b1", label: "b", x: 320, y: 150, type: "terminal", active: true, error: true }
+                        ],
+                        edges: [
+                            { from: "s1", to: "a1" },
+                            { from: "s1", to: "b1" }
+                        ]
+                    },
+                    {
+                        desc: "<b>步驟 5 - 執行回溯與狀態復原：</b>分析器拉響<b>回溯 (Backtracking)</b> 旗標。此時執行<b>狀態復原 (State Restoration)</b>：將 Token 輸入指針重置回最左端的 <code>a</code> (位置 0)，並將語法分析樹先前建立的錯誤子節點通通捨棄。堆疊重置回 <code>[S, $]</code>。",
+                        lookaheadIdx: 0,
+                        lookaheadText: "a",
+                        triggeredRule: "狀態回溯 (Backtrack)",
+                        judgment: "高開銷的狀態復原：1. 輸入流指針被迫退回位置 0；2. 堆疊清空並恢復為 S；3. 語法樹退化為僅存根節點 S。這就是回溯造成的巨大效能耗損。",
+                        stack: ["S", "$"],
+                        backtrack: true,
+                        nodes: [
+                            { id: "s1", label: "S", x: 250, y: 50, type: "nonterminal", active: true, warning: true }
+                        ],
+                        edges: []
+                    },
+                    {
+                        desc: "<b>步驟 6 - 嘗試第二條規則：</b>狀態復原完成後，分析器重新從位置 0 開始，套用下一個備選產生式（規則 2：<code>S → a c</code>）。在語法樹中再次建立子節點 <code>a</code> 與 <code>c</code>，堆疊更新為 <code>[a, c, $]</code>。",
+                        lookaheadIdx: 0,
+                        lookaheadText: "a",
+                        triggeredRule: "嘗試套用 S → a c",
+                        judgment: "回溯後，Parser 開始走第二條路徑 S → a c。堆疊彈出 S 壓入 c、a。Lookahead 指針再次回到 'a'。焦點指向子節點 a。",
+                        stack: ["a", "c", "$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "s1", label: "S", x: 250, y: 50, type: "nonterminal" },
+                            { id: "a2", label: "a", x: 180, y: 150, type: "terminal", active: true },
+                            { id: "c1", label: "c", x: 320, y: 150, type: "terminal" }
+                        ],
+                        edges: [
+                            { from: "s1", to: "a2" },
+                            { from: "s1", to: "c1" }
+                        ]
+                    },
+                    {
+                        desc: "<b>步驟 7 - 再次比對與匹配：</b>堆疊頂部 <code>a</code> 與輸入字元 <code>a</code> 契合，執行 <code>match(a)</code>。輸入指針滑動，預看符號更新為 <code>c</code>，堆疊頂部此時轉為 <code>c</code>。",
+                        lookaheadIdx: 1,
+                        lookaheadText: "c",
+                        triggeredRule: "match(a) 第二次",
+                        judgment: "再次匹配成功。彈出 a。預看指針移向 'c'。此時堆疊頂端為 c，準備進行最終的匹配判定。",
+                        stack: ["c", "$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "s1", label: "S", x: 250, y: 50, type: "nonterminal" },
+                            { id: "a2", label: "a", x: 180, y: 150, type: "terminal", match: true },
+                            { id: "c1", label: "c", x: 320, y: 150, type: "terminal", active: true }
+                        ],
+                        edges: [
+                            { from: "s1", to: "a2" },
+                            { from: "s1", to: "c1" }
+                        ]
+                    },
+                    {
+                        desc: "<b>步驟 8 - 成功匹配尾部符號：</b>堆疊頂端的 <code>c</code> 與預看符號 <code>c</code> 相符！執行 <code>match(c)</code>。輸入流的讀取指針移向算式結束標記 <code>EOF ($)</code>，堆疊中僅剩下結束符號 <code>$</code>。",
+                        lookaheadIdx: 2,
+                        lookaheadText: "EOF",
+                        triggeredRule: "match(c)",
+                        judgment: "終端符號 c 成功匹配。彈出 c。輸入流滑動到結尾 EOF ($)。堆疊此時僅存 $。語法分析樹的推導分支已完全合規。",
+                        stack: ["$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "s1", label: "S", x: 250, y: 50, type: "nonterminal" },
+                            { id: "a2", label: "a", x: 180, y: 150, type: "terminal", match: true },
+                            { id: "c1", label: "c", x: 320, y: 150, type: "terminal", match: true }
+                        ],
+                        edges: [
+                            { from: "s1", to: "a2" },
+                            { from: "s1", to: "c1" }
+                        ]
+                    },
+                    {
+                        desc: "<b>步驟 9 - 語法分析圓滿結束：</b>堆疊符號 <code>$</code> 與輸入流結束標記 <code>EOF</code> 成功對應。經過回溯與重新定位，非預測語法分析器終於成功判定輸入 <code>a c</code> 合法，宣告分析樹被順利<b>接受 (Accept)</b>。",
+                        lookaheadIdx: 2,
+                        lookaheadText: "EOF",
+                        triggeredRule: "接受 (Accept)",
+                        judgment: "分析圓滿結束。雖然成功接受，但由於經歷了步驟 4-5 的失敗與回溯，時間與資源損耗顯著高於具備預看引導的預測分析法。",
+                        stack: ["$"],
+                        backtrack: false,
+                        nodes: [
+                            { id: "s1", label: "S", x: 250, y: 50, type: "nonterminal", highlight: true },
+                            { id: "a2", label: "a", x: 180, y: 150, type: "terminal", match: true, highlight: true },
+                            { id: "c1", label: "c", x: 320, y: 150, type: "terminal", match: true, highlight: true }
+                        ],
+                        edges: [
+                            { from: "s1", to: "a2", highlight: true },
+                            { from: "s1", to: "c1", highlight: true }
+                        ]
+                    }
+                ]
+            }
+        };
+
+        let currentMode = 'predictive';
+        let currentStepIndex = 0;
+
+        // 初始化
+        function initDemo() {
+            currentStepIndex = 0;
+            renderStep();
+        }
+
+        // 切換分析模式
+        function selectMode(mode) {
+            if (currentMode === mode) return;
+            currentMode = mode;
+
+            // 切換按鈕 UI
+            const btnPredictive = document.getElementById('btn-mode-predictive');
+            const btnBacktrack = document.getElementById('btn-mode-backtrack');
+            const backtrackRow = document.getElementById('backtrack-status-row');
+
+            if (mode === 'predictive') {
+                btnPredictive.className = "flex flex-col items-center justify-center p-3 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-indigo-600 bg-indigo-50 text-indigo-700";
+                btnBacktrack.className = "flex flex-col items-center justify-center p-3 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-slate-200 text-slate-600 hover:bg-slate-50";
+                backtrackRow.style.display = 'none';
+            } else {
+                btnBacktrack.className = "flex flex-col items-center justify-center p-3 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-indigo-600 bg-indigo-50 text-indigo-700";
+                btnPredictive.className = "flex flex-col items-center justify-center p-3 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-slate-200 text-slate-600 hover:bg-slate-50";
+                backtrackRow.style.display = 'flex';
+            }
+
+            initDemo();
+        }
+
+        // 渲染指定步驟
+        function renderStep() {
+            const data = parsingModes[currentMode];
+            const step = data.steps[currentStepIndex];
+            const totalSteps = data.steps.length;
+
+            // 1. 更新說明文字與步驟計數
+            document.getElementById('panel-title').textContent = data.title;
+            document.getElementById('step-badge').textContent = `步驟 ${currentStepIndex + 1} / ${totalSteps}`;
+            document.getElementById('step-desc').innerHTML = step.desc;
+
+            // 2. 替換文法標題與規則
+            document.getElementById('grammar-title').textContent = data.grammarTitle;
+            const rulesContainer = document.getElementById('grammar-rules');
+            rulesContainer.innerHTML = '';
+            data.grammarRules.forEach(rule => {
+                const div = document.createElement('div');
+                div.innerHTML = rule;
+                rulesContainer.appendChild(div);
+            });
+
+            // 3. 更新決策分析面板資訊
+            document.getElementById('decision-lookahead').textContent = step.lookaheadText;
+            document.getElementById('decision-rule').textContent = step.triggeredRule;
+            document.getElementById('decision-judgment').textContent = step.judgment;
+            
+            if (currentMode === 'backtrack') {
+                document.getElementById('backtrack-flag').textContent = step.backtrack ? "是 (進行回溯與復原)" : "否";
+                document.getElementById('backtrack-flag').className = step.backtrack ? "font-bold text-red-600 animate-pulse" : "font-bold text-slate-500";
+            }
+
+            // 4. 控制控制按鈕狀態 (限一至兩個互動元素)
+            const prevBtn = document.getElementById('btn-prev');
+            const nextBtn = document.getElementById('btn-next');
+
+            if (currentStepIndex === 0) {
+                prevBtn.disabled = true;
+                prevBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200";
+            } else {
+                prevBtn.disabled = false;
+                prevBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200";
+            }
+
+            if (currentStepIndex === totalSteps - 1) {
+                nextBtn.disabled = true;
+                nextBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-slate-200 text-slate-400 text-sm font-medium cursor-not-allowed transition-all duration-200";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-all duration-200 shadow-sm";
+            }
+
+            // 5. 渲染 Token 暫存軌道 (含指標)
+            renderTokenStream(data.tokens, step.lookaheadIdx);
+
+            // 6. 渲染內部堆疊視窗
+            renderStack(step.stack);
+
+            // 7. 渲染 SVG 語法分析樹
+            renderCanvas(step);
+        }
+
+        // 渲染 Token 軌道
+        function renderTokenStream(tokens, activeIdx) {
+            const container = document.getElementById('token-stream-container');
+            container.innerHTML = '';
+
+            tokens.forEach((token, idx) => {
+                const badge = document.createElement('div');
+                badge.className = "token-slide flex flex-col items-center";
+
+                const isLookahead = idx === activeIdx;
+
+                const tokenBox = document.createElement('span');
+                if (isLookahead) {
+                    tokenBox.className = "px-3 py-1.5 rounded bg-indigo-600 text-white font-bold text-xs shadow-sm ring-2 ring-indigo-300 ring-offset-1";
+                } else if (idx < activeIdx) {
+                    tokenBox.className = "px-3 py-1.5 rounded bg-slate-200 text-slate-400 text-xs line-through";
+                } else {
+                    tokenBox.className = "px-3 py-1.5 rounded bg-white text-slate-700 text-xs border border-slate-200";
+                }
+                tokenBox.textContent = token;
+                badge.appendChild(tokenBox);
+
+                // 指向目前 Token 的平面指標
+                if (isLookahead) {
+                    const arrow = document.createElement('div');
+                    arrow.className = "w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[6px] border-b-indigo-600 mt-1";
+                    badge.appendChild(arrow);
+                } else {
+                    const placeholder = document.createElement('div');
+                    placeholder.className = "w-2 h-[7px] mt-1";
+                    badge.appendChild(placeholder);
+                }
+
+                container.appendChild(badge);
+            });
+
+            // 更新狀態文字
+            const statusLabel = document.getElementById('scan-status');
+            if (activeIdx >= tokens.length - 1) {
+                statusLabel.textContent = "狀態: 掃描完畢 (EOF)";
+                statusLabel.className = "text-emerald-600 font-mono";
+            } else {
+                statusLabel.textContent = `狀態: 掃描中 (預看 '${tokens[activeIdx]}')`;
+                statusLabel.className = "text-indigo-600 font-mono";
+            }
+        }
+
+        // 渲染分析堆疊
+        function renderStack(stack) {
+            const container = document.getElementById('stack-container');
+            container.innerHTML = '';
+
+            stack.forEach((symbol, idx) => {
+                const element = document.createElement('div');
+                element.className = "flex items-center";
+
+                const isTop = idx === 0;
+
+                const box = document.createElement('span');
+                if (isTop) {
+                    box.className = "px-3 py-1.5 rounded bg-indigo-100 text-indigo-800 border-2 border-indigo-500 font-mono text-xs font-bold shadow-sm whitespace-nowrap";
+                } else {
+                    box.className = "px-3 py-1.5 rounded bg-slate-100 text-slate-600 border border-slate-200 font-mono text-xs whitespace-nowrap";
+                }
+                box.textContent = symbol;
+                element.appendChild(box);
+
+                // 在堆疊元素間加入流向
+                if (idx < stack.length - 1) {
+                    const arrow = document.createElement('span');
+                    arrow.className = "text-slate-300 text-xs mx-1 font-mono";
+                    arrow.textContent = "←";
+                    element.appendChild(arrow);
+                }
+
+                container.appendChild(element);
+            });
+        }
+
+        // SVG 圖形繪製邏輯
+        function renderCanvas(step) {
+            const svg = document.getElementById('tree-svg');
+            svg.innerHTML = ''; // 清空舊圖形
+
+            // 1. 繪製連線（Edges）
+            step.edges.forEach(edge => {
+                const fromNode = step.nodes.find(n => n.id === edge.from);
+                const toNode = step.nodes.find(n => n.id === edge.to);
+                
+                if (fromNode && toNode) {
+                    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    line.setAttribute("x1", fromNode.x);
+                    line.setAttribute("y1", fromNode.y);
+                    line.setAttribute("x2", toNode.x);
+                    line.setAttribute("y2", toNode.y);
+                    
+                    if (edge.highlight) {
+                        line.setAttribute("stroke", "#10b981");
+                        line.setAttribute("stroke-width", "2.5");
+                    } else {
+                        line.setAttribute("stroke", "#cbd5e1");
+                        line.setAttribute("stroke-width", "1.5");
+                    }
+                    svg.appendChild(line);
+                }
+            });
+
+            // 2. 繪製節點（Nodes）
+            step.nodes.forEach(node => {
+                const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                group.setAttribute("class", "tree-node");
+
+                let rectColor = "#ffffff";
+                let strokeColor = "#64748b";
+                let strokeWidth = "1.5";
+                let textColor = "#0f172a";
+                let fontWeight = "normal";
+
+                if (node.type === "terminal") {
+                    // 終端節點（葉子節點）
+                    rectColor = "#f8fafc";
+                    strokeColor = "#94a3b8";
+                    fontWeight = "bold";
+                    if (node.match) {
+                        rectColor = "#f0fdf4";
+                        strokeColor = "#16a34a";
+                        textColor = "#15803d";
+                    }
+                    if (node.error) {
+                        rectColor = "#fef2f2";
+                        strokeColor = "#dc2626";
+                        textColor = "#b91c1c";
+                    }
+                }
+
+                // 當前解析/匹配之核心節點
+                if (node.active) {
+                    strokeColor = "#4f46e5";
+                    strokeWidth = "2.5";
+                    textColor = "#4338ca";
+                    fontWeight = "bold";
+
+                    if (node.warning) {
+                        strokeColor = "#d97706";
+                        textColor = "#b45309";
+                    }
+
+                    // 外圍虛線指標環
+                    const pulseRing = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                    const ringSize = 10;
+                    pulseRing.setAttribute("x", node.x - (80 + ringSize) / 2);
+                    pulseRing.setAttribute("y", node.y - (34 + ringSize) / 2);
+                    pulseRing.setAttribute("width", 80 + ringSize);
+                    pulseRing.setAttribute("height", 34 + ringSize);
+                    pulseRing.setAttribute("rx", "8");
+                    pulseRing.setAttribute("fill", "none");
+                    pulseRing.setAttribute("stroke", node.warning ? "#f59e0b" : "#6366f1");
+                    pulseRing.setAttribute("stroke-width", "1.5");
+                    pulseRing.setAttribute("stroke-dasharray", "3,3");
+                    group.appendChild(pulseRing);
+                }
+
+                if (node.highlight) {
+                    rectColor = "#f0fdf4";
+                    strokeColor = "#10b981";
+                    strokeWidth = "2";
+                    textColor = "#065f46";
+                    fontWeight = "bold";
+                }
+
+                // 繪製圓角矩形框
+                const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                const rectWidth = 80;
+                const rectHeight = 34;
+                rect.setAttribute("x", node.x - rectWidth / 2);
+                rect.setAttribute("y", node.y - rectHeight / 2);
+                rect.setAttribute("width", rectWidth);
+                rect.setAttribute("height", rectHeight);
+                rect.setAttribute("rx", "6");
+                rect.setAttribute("fill", rectColor);
+                rect.setAttribute("stroke", strokeColor);
+                rect.setAttribute("stroke-width", strokeWidth);
+                group.appendChild(rect);
+
+                // 繪製文字
+                const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                text.setAttribute("x", node.x);
+                text.setAttribute("y", node.y + 4);
+                text.setAttribute("text-anchor", "middle");
+                text.setAttribute("fill", textColor);
+                text.setAttribute("font-size", "11px");
+                text.setAttribute("font-family", "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace");
+                text.setAttribute("font-weight", fontWeight);
+                text.textContent = node.label;
+                group.appendChild(text);
+
+                svg.appendChild(group);
+            });
+        }
+
+        // 步進控制
+        function nextStep() {
+            const data = parsingModes[currentMode];
+            if (currentStepIndex < data.steps.length - 1) {
+                currentStepIndex++;
+                renderStep();
+            }
+        }
+
+        function prevStep() {
+            if (currentStepIndex > 0) {
+                currentStepIndex--;
+                renderStep();
+            }
+        }
+
+        function resetDemo() {
+            initDemo();
+        }
+
+        // 頁面加載就緒後啟動
+        window.onload = function() {
+            initDemo();
+        };
+    </script>
+</body>
+</html>

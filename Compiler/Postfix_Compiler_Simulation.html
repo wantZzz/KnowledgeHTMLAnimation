@@ -1,0 +1,496 @@
+---
+layout: null
+title: "[Chapter 2.5] 運算式翻譯器模擬"
+description: "使用上下文無關文法（Context-Free Grammar）產生式定義一個中序轉前序的運算式翻譯器的語法結構，用以模擬編譯器前端的語法與語意分析流程。"
+role: "primary"
+related: []
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>簡易運算式翻譯器執行流程與虛擬碼逐步對照</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .code-line {
+            transition: all 0.2s ease;
+        }
+        .code-line.active {
+            background-color: #e0e7ff;
+            border-left: 4px solid #4f46e5;
+            color: #1e1b4b;
+            font-weight: 600;
+        }
+        .stack-item {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col justify-between">
+
+    <!-- 頁首 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <h1 class="text-xl font-bold tracking-tight text-slate-900">編譯器設計：簡易運算式翻譯器模擬（Postfix Compiler Simulation）</h1>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-mono">Chapter 2.5 Translator</span>
+        </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
+        
+        <!-- 左側：步驟控制器、說明與虛擬碼分頁（同一個版面，可切換頁籤） -->
+        <section class="lg:col-span-6 flex flex-col gap-4">
+            
+            <!-- 控制與說明面板 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between min-h-[220px]">
+                <div>
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="font-bold text-slate-900 text-base">翻譯執行步驟與分析說明</h3>
+                        <span id="step-badge" class="text-xs bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded font-mono">步驟 1 / 11</span>
+                    </div>
+                    <p id="step-desc" class="text-xs text-slate-600 leading-relaxed min-h-[80px]">
+                        載入中...
+                    </p>
+                </div>
+
+                <!-- 限制的一至兩個可互動按鈕 -->
+                <div class="border-t border-slate-100 pt-3 mt-4 flex items-center justify-between gap-3">
+                    <button id="btn-prev" onclick="prevStep()" class="flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg border border-slate-200 text-xs font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200" disabled>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+                        </svg>
+                        上一步 (Prev)
+                    </button>
+                    <button id="btn-next" onclick="nextStep()" class="flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-all duration-200 shadow-sm">
+                        下一步 (Next)
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 虛擬碼程序頁籤對照 -->
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col flex-grow">
+                <!-- 頁籤 Header -->
+                <div class="bg-slate-50 border-b border-slate-200 flex text-xs font-mono">
+                    <button id="tab-postfix" onclick="switchTab('postfix')" class="py-2.5 px-4 border-r border-slate-200 font-bold text-indigo-600 bg-white border-t-2 border-t-indigo-600 transition-all">
+                        Postfix (main)
+                    </button>
+                    <button id="tab-expr" onclick="switchTab('expr')" class="py-2.5 px-4 border-r border-slate-200 text-slate-500 hover:bg-slate-100 transition-all">
+                        expr()
+                    </button>
+                    <button id="tab-rest" onclick="switchTab('rest')" class="py-2.5 px-4 border-r border-slate-200 text-slate-500 hover:bg-slate-100 transition-all">
+                        rest()
+                    </button>
+                    <button id="tab-term" onclick="switchTab('term')" class="py-2.5 px-4 text-slate-500 hover:bg-slate-100 transition-all">
+                        term() & match()
+                    </button>
+                </div>
+
+                <!-- 程式碼顯示區 -->
+                <div class="p-4 bg-slate-950 text-slate-300 font-mono text-xs overflow-y-auto flex-grow h-[320px]">
+                    
+                    <!-- Postfix 虛擬碼 -->
+                    <div id="code-postfix" class="space-y-1">
+                        <div class="text-slate-500">// 翻譯器主啟動類別</div>
+                        <div class="code-line px-2 rounded" data-line="p1">class Postfix {</div>
+                        <div class="code-line px-2 rounded" data-line="p2">&nbsp;&nbsp;&nbsp;&nbsp;public static void main(String[] args) {</div>
+                        <div class="code-line px-2 rounded" data-line="p3">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Parser parser = new Parser(); // 建立分析器，預讀第一個字元</div>
+                        <div class="code-line px-2 rounded" data-line="p4">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;parser.expr(); // 呼叫非終止符號 expr 進入翻譯流程</div>
+                        <div class="code-line px-2 rounded" data-line="p5">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;System.out.println(); // 輸出換行符號，結束翻譯程序</div>
+                        <div class="code-line px-2 rounded" data-line="p6">&nbsp;&nbsp;&nbsp;&nbsp;}</div>
+                        <div class="code-line px-2 rounded" data-line="p7">}</div>
+                    </div>
+
+                    <!-- expr() 虛擬碼 -->
+                    <div id="code-expr" class="space-y-1 hidden">
+                        <div class="text-slate-500">// 非終止符號 E → T R 實作程序</div>
+                        <div class="code-line px-2 rounded" data-line="e1">void expr() {</div>
+                        <div class="code-line px-2 rounded" data-line="e2">&nbsp;&nbsp;&nbsp;&nbsp;term(); // 1. 解析最左側的項 T (digit)</div>
+                        <div class="code-line px-2 rounded" data-line="e3">&nbsp;&nbsp;&nbsp;&nbsp;rest(); // 2. 解析運算式餘項 R (加減法尾隨)</div>
+                        <div class="code-line px-2 rounded" data-line="e4">}</div>
+                    </div>
+
+                    <!-- rest() 虛擬碼 -->
+                    <div id="code-rest" class="space-y-1 hidden">
+                        <div class="text-slate-500">// 非終止符號 R → + T {print('+')} R | - T {print('-')} R | ε</div>
+                        <div class="code-line px-2 rounded" data-line="r1">void rest() {</div>
+                        <div class="code-line px-2 rounded" data-line="r2">&nbsp;&nbsp;&nbsp;&nbsp;if (lookahead == '+') {</div>
+                        <div class="code-line px-2 rounded" data-line="r3">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;match('+'); // 匹配並消耗 '+'</div>
+                        <div class="code-line px-2 rounded" data-line="r4">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;term(); // 剖析加號右側運算元</div>
+                        <div class="code-line px-2 rounded" data-line="r5">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;System.out.print('+'); // 語意動作：印出 '+' 實現後序化</div>
+                        <div class="code-line px-2 rounded" data-line="r6">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;rest(); // 尾部遞迴，解析剩餘部分</div>
+                        <div class="code-line px-2 rounded" data-line="r7">&nbsp;&nbsp;&nbsp;&nbsp;} else if (lookahead == '-') {</div>
+                        <div class="code-line px-2 rounded" data-line="r8">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;match('-'); // 匹配並消耗 '-'</div>
+                        <div class="code-line px-2 rounded" data-line="r9">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;term(); // 剖析減號右側運算元</div>
+                        <div class="code-line px-2 rounded" data-line="r10">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;System.out.print('-'); // 語意動作：印出 '-' 實現後序化</div>
+                        <div class="code-line px-2 rounded" data-line="r11">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;rest(); // 尾部遞迴</div>
+                        <div class="code-line px-2 rounded" data-line="r12">&nbsp;&nbsp;&nbsp;&nbsp;} else {</div>
+                        <div class="code-line px-2 rounded" data-line="r13">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;// ε-產生式：預設不執行任何動作，直接返回退出</div>
+                        <div class="code-line px-2 rounded" data-line="r14">&nbsp;&nbsp;&nbsp;&nbsp;}</div>
+                        <div class="code-line px-2 rounded" data-line="r15">}</div>
+                    </div>
+
+                    <!-- term & match 虛擬碼 -->
+                    <div id="code-term" class="space-y-1 hidden">
+                        <div class="text-slate-500">// 終端符號匹配與讀取</div>
+                        <div class="code-line px-2 rounded" data-line="t1">void term() {</div>
+                        <div class="code-line px-2 rounded" data-line="t2">&nbsp;&nbsp;&nbsp;&nbsp;if (Character.isDigit((char)lookahead)) {</div>
+                        <div class="code-line px-2 rounded" data-line="t3">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;System.out.print((char)lookahead); // 語意動作：讀到數字直接輸出</div>
+                        <div class="code-line px-2 rounded" data-line="t4">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;match(lookahead); // 執行匹配與指標推進</div>
+                        <div class="code-line px-2 rounded" data-line="t5">&nbsp;&nbsp;&nbsp;&nbsp;} else {</div>
+                        <div class="code-line px-2 rounded" data-line="t6">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;throw new Error("語法錯誤");</div>
+                        <div class="code-line px-2 rounded" data-line="t7">&nbsp;&nbsp;&nbsp;&nbsp;}</div>
+                        <div class="code-line px-2 rounded" data-line="t8">}</div>
+                        <div class="text-slate-500 mt-2">// 檢查當前 lookahead 是否相符，並推進指標</div>
+                        <div class="code-line px-2 rounded" data-line="m1">void match(int t) {</div>
+                        <div class="code-line px-2 rounded" data-line="m2">&nbsp;&nbsp;&nbsp;&nbsp;if (lookahead == t) {</div>
+                        <div class="code-line px-2 rounded" data-line="m3">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;lookahead = System.in.read(); // 讀取串流中下一個字元</div>
+                        <div class="code-line px-2 rounded" data-line="m4">&nbsp;&nbsp;&nbsp;&nbsp;} else {</div>
+                        <div class="code-line px-2 rounded" data-line="m5">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;throw new Error("語法錯誤");</div>
+                        <div class="code-line px-2 rounded" data-line="m6">&nbsp;&nbsp;&nbsp;&nbsp;}</div>
+                        <div class="code-line px-2 rounded" data-line="m7">}</div>
+                    </div>
+
+                </div>
+            </div>
+
+        </section>
+
+        <!-- 右側：翻譯狀態機、Call Stack 與緩衝區 -->
+        <section class="lg:col-span-6 flex flex-col gap-4">
+            
+            <!-- 詞彙分析緩衝區與 Lookahead 指標 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div class="flex items-center justify-between text-xs text-slate-500 mb-2 font-semibold">
+                    <span>輸入串流與 Lookahead 指標</span>
+                    <span id="scan-status" class="text-indigo-600 font-mono">當前狀態：Parser 初始化</span>
+                </div>
+                <div class="flex items-center gap-2 font-mono" id="token-stream-container">
+                    <!-- 動態渲染 Token -->
+                </div>
+            </div>
+
+            <!-- 後序翻譯輸出磁帶 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h3 class="font-bold text-slate-900 text-sm mb-3">翻譯器後序輸出（System.out.print）</h3>
+                <div class="bg-slate-900 p-4 rounded-lg font-mono text-slate-200 min-h-[56px] flex items-center">
+                    <span class="text-slate-500 mr-2">$</span>
+                    <span id="output-tape" class="text-emerald-400 text-lg font-bold tracking-widest"></span>
+                    <span class="animate-pulse ml-1 text-slate-400">|</span>
+                </div>
+            </div>
+
+            <!-- 呼叫堆疊 Call Stack 模擬區 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex-grow flex flex-col">
+                <div class="flex items-center gap-2 border-b border-slate-100 pb-2 mb-3">
+                    <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                    </svg>
+                    <span class="font-bold text-slate-900 text-sm">程序呼叫堆疊 (Call Stack Depth)</span>
+                </div>
+                <div class="bg-slate-50 p-4 rounded-lg border border-slate-100 flex-grow flex flex-col-reverse justify-start gap-2 min-h-[180px]" id="stack-view">
+                    <!-- 動態渲染堆疊框架 -->
+                </div>
+                <div class="mt-2 text-[10px] text-slate-400">說明：最上方為當前執行的活性函數框架（Active Frame）。</div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- 頁尾 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500">
+        <div class="max-w-7xl mx-auto">
+             編譯器設計課程教材輔助軟體 - 簡易運算式翻譯器實作對比
+        </div>
+    </footer>
+
+    <script>
+        // 定義步驟資料庫
+        const steps = [
+            {
+                desc: "<b>初始狀態：</b>程序從 <code>Postfix.main()</code> 開始執行。初始化 <code>Parser</code> 實例時，建構函數預先讀取輸入字串的的第一個字元 <code>9</code>，並存入全域變數 <code>lookahead</code>。",
+                lookaheadIdx: 0,
+                lookaheadText: "9",
+                activeTab: "postfix",
+                activeLines: ["p3"],
+                stack: ["Postfix.main()"],
+                output: "",
+                status: "初始化並讀入 '9'"
+            },
+            {
+                desc: "<b>步驟 2 - 呼叫表達式剖析：</b><code>main</code> 方法呼叫 <code>parser.expr()</code>，開始正式進行語法分析與翻譯。程序進入非終止符號 <code>expr()</code> 函數中。",
+                lookaheadIdx: 0,
+                lookaheadText: "9",
+                activeTab: "expr",
+                activeLines: ["e1", "e2"],
+                stack: ["Postfix.main()", "expr()"],
+                output: "",
+                status: "呼叫 expr()"
+            },
+            {
+                desc: "<b>步驟 3 - 剖析項 (term)：</b>在 <code>expr()</code> 內部，非終端符號程序的第一個任務是解析並匹配一個項。因此程序呼叫了 <code>term()</code> 函數。",
+                lookaheadIdx: 0,
+                lookaheadText: "9",
+                activeTab: "term",
+                activeLines: ["t1", "t2"],
+                stack: ["Postfix.main()", "expr()", "term()"],
+                output: "",
+                status: "呼叫 term()"
+            },
+            {
+                desc: "<b>步驟 4 - 輸出數字並推進指標：</b>在 <code>term()</code> 內部，<code>lookahead</code> 值 <code>9</code> 經判定為合法數字，執行第一個語意動作 <code>System.out.print('9')</code> 將其印出。隨後呼叫 <code>match('9')</code>，將全域讀取指標 <code>lookahead</code> 推進至下一個字元 <code>-</code>。<code>term()</code> 執行完畢退出堆疊。",
+                lookaheadIdx: 1,
+                lookaheadText: "-",
+                activeTab: "term",
+                activeLines: ["t3", "t4", "m1", "m2", "m3"],
+                stack: ["Postfix.main()", "expr()"],
+                output: "9",
+                status: "匹配 '9'，輸出 '9'"
+            },
+            {
+                desc: "<b>步驟 5 - 呼叫餘項剖析 (rest)：</b>第一個項剖析完成後，程序回到 <code>expr()</code> 並依據結構順序呼叫 <code>rest()</code>，處理算式後續的加減法分支。",
+                lookaheadIdx: 1,
+                lookaheadText: "-",
+                activeTab: "rest",
+                activeLines: ["r1", "r2"],
+                stack: ["Postfix.main()", "expr()", "rest()"],
+                output: "9",
+                status: "呼叫 rest()"
+            },
+            {
+                desc: "<b>步驟 6 - 匹配減法並呼叫 term：</b>在 <code>rest()</code> 內部，程序預看到 <code>-</code>，符合減法分支條件。執行 <code>match('-')</code> 將 <code>lookahead</code> 指標推進至數字 <code>5</code>。接著呼叫 <code>term()</code> 處理減號右側的運算元。",
+                lookaheadIdx: 2,
+                lookaheadText: "5",
+                activeTab: "rest",
+                activeLines: ["r7", "r8", "r9"],
+                stack: ["Postfix.main()", "expr()", "rest()", "term()"],
+                output: "9",
+                status: "匹配 '-'，呼叫 term()"
+            },
+            {
+                desc: "<b>步驟 7 - 輸出第二個數字：</b>進入 <code>term()</code>。目前預讀字元 <code>5</code> 判定為數字，觸發語意動作 <code>System.out.print('5')</code> 印出運算元。隨後呼叫 <code>match('5')</code>，將指標更新至加號 <code>+</code>，<code>term()</code> 隨即返回退出。",
+                lookaheadIdx: 3,
+                lookaheadText: "+",
+                activeTab: "term",
+                activeLines: ["t3", "t4"],
+                stack: ["Postfix.main()", "expr()", "rest()"],
+                output: "9 5",
+                status: "匹配 '5'，輸出 '5'"
+            },
+            {
+                desc: "<b>步驟 8 - 執行減法语意動作並遞迴：</b>減號右側的項 <code>T</code> 已處理完畢。程序回到 <code>rest()</code>，執行核心語意動作：印出減法運算子 <code>System.out.print('-')</code>。此動作確保了運算子在運算元之後印出，達成了後序化。緊接著程序進行尾部遞迴，再次呼叫 <code>rest()</code>。",
+                lookaheadIdx: 3,
+                lookaheadText: "+",
+                activeTab: "rest",
+                activeLines: ["r10", "r11"],
+                stack: ["Postfix.main()", "expr()", "rest()", "rest()"],
+                output: "9 5 -",
+                status: "輸出 '-'，遞迴呼叫 rest()"
+            },
+            {
+                desc: "<b>步驟 9 - 匹配加法並呼叫 term：</b>進入第二層 <code>rest()</code> 遞迴，預看字元為 <code>+</code>。程序判定與加法分支相符，執行 <code>match('+')</code> 將 <code>lookahead</code> 推進至數字 <code>2</code>，並呼叫 <code>term()</code> 解析運算元。",
+                lookaheadIdx: 4,
+                lookaheadText: "2",
+                activeTab: "rest",
+                activeLines: ["r2", "r3", "r4"],
+                stack: ["Postfix.main()", "expr()", "rest()", "rest()", "term()"],
+                output: "9 5 -",
+                status: "匹配 '+'，呼叫 term()"
+            },
+            {
+                desc: "<b>步驟 10 - 輸出第三個數字：</b>在 <code>term()</code> 內部，匹配到數字 <code>2</code> 並印出。隨後 <code>match('2')</code> 將全域指標推進至結束符號 <code>EOF</code>（字串結尾標記），<code>term()</code> 執行結束並彈出堆疊。",
+                lookaheadIdx: 5,
+                lookaheadText: "EOF",
+                activeTab: "term",
+                activeLines: ["t3", "t4"],
+                stack: ["Postfix.main()", "expr()", "rest()", "rest()"],
+                output: "9 5 - 2",
+                status: "匹配 '2'，輸出 '2'"
+            },
+            {
+                desc: "<b>步驟 11 - 執行加法语意動作與 EOF 退出：</b>回到 <code>rest()</code> 層級，執行語意動作：印出加號 <code>System.out.print('+')</code>。接著再次遞迴呼叫 <code>rest()</code>，第三層 <code>rest()</code> 檢測到 <code>lookahead == EOF</code>，不匹配加減法，故套用 <b>ε-產生式</b> 什麼都不做直接返回。各層遞迴隨之順序出棧返回 <code>main()</code>，輸出換行符號，翻譯順利結束。",
+                lookaheadIdx: 5,
+                lookaheadText: "EOF",
+                activeTab: "rest",
+                activeLines: ["r5", "r6", "r13", "p5"],
+                stack: ["Postfix.main()"],
+                output: "9 5 - 2 +",
+                status: "輸出 '+'，分析完畢"
+            }
+        ];
+
+        let currentStepIndex = 0;
+
+        // 初始化
+        function initDemo() {
+            currentStepIndex = 0;
+            renderStep();
+        }
+
+        // 頁籤切換輔助
+        function switchTab(tabId) {
+            // 隱藏所有程式碼塊
+            document.getElementById('code-postfix').classList.add('hidden');
+            document.getElementById('code-expr').classList.add('hidden');
+            document.getElementById('code-rest').classList.add('hidden');
+            document.getElementById('code-term').classList.add('hidden');
+
+            // 移除所有頁籤的高亮樣式
+            const tabs = ['postfix', 'expr', 'rest', 'term'];
+            tabs.forEach(t => {
+                const btn = document.getElementById(`tab-${t}`);
+                btn.className = "py-2.5 px-4 border-r border-slate-200 text-slate-500 hover:bg-slate-100 transition-all";
+            });
+
+            // 顯示選擇的程式碼塊
+            document.getElementById(`code-${tabId}`).classList.remove('hidden');
+
+            // 套用高亮樣式給當前頁籤
+            const activeBtn = document.getElementById(`tab-${tabId}`);
+            activeBtn.className = "py-2.5 px-4 border-r border-slate-200 font-bold text-indigo-600 bg-white border-t-2 border-t-indigo-600 transition-all";
+        }
+
+        // 渲染指定步驟
+        function renderStep() {
+            const step = steps[currentStepIndex];
+            const totalSteps = steps.length;
+
+            // 1. 更新計數器與說明
+            document.getElementById('step-badge').textContent = `步驟 ${currentStepIndex + 1} / ${totalSteps}`;
+            document.getElementById('step-desc').innerHTML = step.desc;
+            document.getElementById('output-tape').textContent = step.output;
+
+            // 2. 切換至正確的程式碼頁籤
+            switchTab(step.activeTab);
+
+            // 3. 清理所有程式碼行的高亮，並為當前活躍行加上高亮
+            const lines = document.querySelectorAll('.code-line');
+            lines.forEach(line => {
+                line.classList.remove('active');
+            });
+            step.activeLines.forEach(lineId => {
+                const elements = document.querySelectorAll(`[data-line="${lineId}"]`);
+                elements.forEach(el => el.classList.add('active'));
+            });
+
+            // 4. 控制按鈕狀態
+            const prevBtn = document.getElementById('btn-prev');
+            const nextBtn = document.getElementById('btn-next');
+
+            if (currentStepIndex === 0) {
+                prevBtn.disabled = true;
+                prevBtn.className = "flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg border border-slate-200 text-xs font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200";
+            } else {
+                prevBtn.disabled = false;
+                prevBtn.className = "flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200";
+            }
+
+            if (currentStepIndex === totalSteps - 1) {
+                nextBtn.disabled = true;
+                nextBtn.className = "flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-slate-200 text-slate-400 text-xs font-medium cursor-not-allowed transition-all duration-200";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-all duration-200 shadow-sm";
+            }
+
+            // 5. 渲染 Token 緩衝區軌道
+            renderTokenStream(["9", "-", "5", "+", "2", "EOF"], step.lookaheadIdx);
+
+            // 6. 渲染呼叫堆疊 (Call Stack)
+            renderStack(step.stack);
+        }
+
+        // 渲染 Token 緩衝軌道
+        function renderTokenStream(tokens, activeIdx) {
+            const container = document.getElementById('token-stream-container');
+            container.innerHTML = '';
+
+            tokens.forEach((token, idx) => {
+                const wrapper = document.createElement('div');
+                wrapper.className = "token-slide flex flex-col items-center";
+
+                const isLookahead = idx === activeIdx;
+
+                const tokenBox = document.createElement('span');
+                if (isLookahead) {
+                    tokenBox.className = "px-3 py-1.5 rounded bg-indigo-600 text-white font-bold text-xs shadow-sm ring-2 ring-indigo-300 ring-offset-1";
+                } else if (idx < activeIdx) {
+                    tokenBox.className = "px-3 py-1.5 rounded bg-slate-200 text-slate-400 text-xs line-through";
+                } else {
+                    tokenBox.className = "px-3 py-1.5 rounded bg-white text-slate-700 text-xs border border-slate-200";
+                }
+                tokenBox.textContent = token;
+                wrapper.appendChild(tokenBox);
+
+                // 指標箭頭 (無 emoji)
+                if (isLookahead) {
+                    const arrow = document.createElement('div');
+                    arrow.className = "w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[6px] border-b-indigo-600 mt-1";
+                    wrapper.appendChild(arrow);
+                } else {
+                    const placeholder = document.createElement('div');
+                    placeholder.className = "w-2 h-[7px] mt-1";
+                    wrapper.appendChild(placeholder);
+                }
+
+                container.appendChild(wrapper);
+            });
+
+            // 更新掃描文字狀態
+            const statusLabel = document.getElementById('scan-status');
+            const step = steps[currentStepIndex];
+            statusLabel.textContent = `當前狀態：${step.status}`;
+        }
+
+        // 渲染呼叫堆疊
+        function renderStack(stack) {
+            const container = document.getElementById('stack-view');
+            container.innerHTML = '';
+
+            stack.forEach((frame, idx) => {
+                const item = document.createElement('div');
+                item.className = "stack-item w-full py-2 px-3 rounded-lg border text-center font-mono text-xs shadow-sm ";
+
+                const isTop = idx === stack.length - 1;
+                if (isTop) {
+                    item.className += "bg-indigo-50 text-indigo-700 border-indigo-400 font-bold ring-1 ring-indigo-100";
+                } else {
+                    item.className += "bg-white text-slate-400 border-slate-200";
+                }
+
+                item.textContent = frame;
+                container.appendChild(item);
+            });
+        }
+
+        // 步進控制
+        function nextStep() {
+            if (currentStepIndex < steps.length - 1) {
+                currentStepIndex++;
+                renderStep();
+            }
+        }
+
+        function prevStep() {
+            if (currentStepIndex > 0) {
+                currentStepIndex--;
+                renderStep();
+            }
+        }
+
+        function resetDemo() {
+            initDemo();
+        }
+
+        // 頁面加載完成後啟動
+        window.onload = function() {
+            initDemo();
+        };
+    </script>
+</body>
+</html>

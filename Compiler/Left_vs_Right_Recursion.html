@@ -1,0 +1,559 @@
+---
+layout: null
+title: "[Chapter 2.4 & 2.5] 左遞迴與右遞迴"
+description: "模擬由上而下分析左遞迴與右遞迴同時解析輸入程式的行為"
+role: "primary"
+related: []
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>左遞迴與右遞迴之遞迴下降剖析對比演示</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .stack-item {
+            transition: all 0.3s ease-in-out;
+        }
+        .flow-line {
+            stroke-dasharray: 4;
+            animation: dash 1s linear infinite;
+        }
+        @keyframes dash {
+            to {
+                stroke-dashoffset: -20;
+            }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col justify-between">
+
+    <!-- 頁首 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <h1 class="text-xl font-bold tracking-tight text-slate-900">編譯器設計：左遞迴與右遞迴剖析行為對比 (Left vs. Right Recursion in Parsing)</h1>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-mono">Chapter 2.4 & 2.5</span>
+        </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="max-w-7xl w-full mx-auto p-4 md:p-6 flex-grow flex flex-col gap-6">
+        
+        <!-- 輸入與進度指示器 -->
+        <section class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                    <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">輸入 Token 串流 (Input Stream)</h2>
+                    <div class="flex items-center gap-2 font-mono" id="input-stream-container">
+                        <!-- 動態渲染輸入 Token -->
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="text-xs bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-100 font-mono" id="step-counter">
+                        當前進度：步驟 1 / 7
+                    </span>
+                    <button onclick="resetDemo()" class="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H17"/>
+                        </svg>
+                        重置演示
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 對比面板區 -->
+        <section class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            
+            <!-- 左側：左遞迴 naive 剖析器 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between min-h-[580px]" id="left-panel">
+                <div>
+                    <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                        <div class="flex items-center gap-2">
+                            <span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                            <h3 class="font-bold text-slate-900 text-sm">左遞迴文法剖析 (Naive Left Recursion)</h3>
+                        </div>
+                        <span class="text-xs font-mono bg-rose-50 text-rose-700 px-2 py-0.5 rounded border border-rose-100">文法：E → E + T | T</span>
+                    </div>
+
+                    <!-- 虛擬 Call Stack -->
+                    <div class="mb-4">
+                        <h4 class="text-xs font-semibold text-slate-500 mb-2 font-mono">剖析器調用堆疊 (Call Stack Depth)</h4>
+                        <div class="bg-slate-50 p-4 rounded-lg border border-slate-100 min-h-[160px] flex flex-col-reverse justify-start gap-2" id="left-stack">
+                            <!-- 動態渲染堆疊節點 -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 文法匹配與呼叫決策區 -->
+                <div class="bg-rose-50/40 p-4 rounded-lg border border-rose-100/60 my-2 text-xs font-mono">
+                    <h4 class="font-bold text-rose-900 mb-1.5">左遞迴比對決策與呼叫成因</h4>
+                    <div class="space-y-1 text-slate-700">
+                        <div class="flex justify-between">
+                            <span>預看符號 (Lookahead):</span>
+                            <span id="left-match-lookahead" class="font-bold text-rose-700">-</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>當前調用目標:</span>
+                            <span id="left-match-target" class="font-bold text-slate-800">-</span>
+                        </div>
+                        <div class="border-t border-rose-200/40 my-1"></div>
+                        <div class="leading-normal">
+                            <span class="text-slate-500 block">呼叫成因與規則匹配:</span>
+                            <span id="left-match-reason" class="text-slate-600 font-sans">無</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 狀態說明與結果 -->
+                <div class="mt-2 p-4 rounded-lg border text-xs font-mono" id="left-status-box">
+                    <div class="flex justify-between mb-1">
+                        <span>消耗 Token 數:</span>
+                        <span id="left-consumed-count" class="font-bold">0</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>執行狀態:</span>
+                        <span id="left-execution-state" class="font-bold text-slate-600">等待初始化</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右側：右遞迴預測剖析器 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between min-h-[580px]" id="right-panel">
+                <div>
+                    <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                        <div class="flex items-center gap-2">
+                            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                            <h3 class="font-bold text-slate-900 text-sm">右遞迴文法剖析 (Predictive Right Recursion)</h3>
+                        </div>
+                        <span class="text-xs font-mono bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded border border-emerald-100">文法：E → T R , R → + T R | ε</span>
+                    </div>
+
+                    <!-- 虛擬 Call Stack -->
+                    <div class="mb-4">
+                        <h4 class="text-xs font-semibold text-slate-500 mb-2 font-mono">剖析器調用堆疊 (Call Stack Depth)</h4>
+                        <div class="bg-slate-50 p-4 rounded-lg border border-slate-100 min-h-[160px] flex flex-col-reverse justify-start gap-2" id="right-stack">
+                            <!-- 動態內部堆疊 -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 文法匹配與呼叫決策區 -->
+                <div class="bg-emerald-50/40 p-4 rounded-lg border border-emerald-100/60 my-2 text-xs font-mono">
+                    <h4 class="font-bold text-emerald-900 mb-1.5">右遞迴比對決策與呼叫成因</h4>
+                    <div class="space-y-1 text-slate-700">
+                        <div class="flex justify-between">
+                            <span>預看符號 (Lookahead):</span>
+                            <span id="right-match-lookahead" class="font-bold text-emerald-700">-</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>當前調用目標:</span>
+                            <span id="right-match-target" class="font-bold text-slate-800">-</span>
+                        </div>
+                        <div class="border-t border-emerald-200/40 my-1"></div>
+                        <div class="leading-normal">
+                            <span class="text-slate-500 block">呼叫成因與規則匹配:</span>
+                            <span id="right-match-reason" class="text-slate-600 font-sans">無</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 狀態說明與結果 -->
+                <div class="mt-2 p-4 rounded-lg border text-xs font-mono" id="right-status-box">
+                    <div class="flex justify-between mb-1">
+                        <span>消耗 Token 數:</span>
+                        <span id="right-consumed-count" class="font-bold">0</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>執行狀態:</span>
+                        <span id="right-execution-state" class="font-bold text-slate-600">等待初始化</span>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- 學術技術解說與控制面板 -->
+        <section class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                
+                <!-- 技術解析文字說明 -->
+                <div class="lg:col-span-8 flex flex-col justify-between min-h-[120px]">
+                    <div>
+                        <h3 class="font-bold text-slate-900 text-sm mb-2 flex items-center gap-1">
+                            <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            剖析器行為與技術知識標記
+                        </h3>
+                        <p class="text-xs text-slate-600 leading-relaxed" id="step-description">
+                            載入中...
+                        </p>
+                    </div>
+                </div>
+
+                <!-- 限定的一至兩個互動元素 -->
+                <div class="lg:col-span-4 flex items-center justify-end gap-3 border-t lg:border-t-0 lg:border-l border-slate-100 pt-4 lg:pt-0 lg:pl-6">
+                    <button id="btn-prev" onclick="prevStep()" class="flex-1 lg:flex-initial flex items-center justify-center gap-2 py-2.5 px-5 rounded-lg border border-slate-200 text-xs font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200" disabled>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+                        </svg>
+                        上一步 (Prev)
+                    </button>
+                    <button id="btn-next" onclick="nextStep()" class="flex-1 lg:flex-initial flex items-center justify-center gap-2 py-2.5 px-5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-all duration-200 shadow-sm">
+                        下一步 (Next)
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                    </button>
+                </div>
+
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 頁尾 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500">
+        <div class="max-w-7xl mx-auto">
+             編譯器設計課程教材輔助軟體 - 左遞迴與右遞迴剖析行為對比
+        </div>
+    </footer>
+
+    <script>
+        // 定義輸入 Token 串流
+        const inputTokens = ["9", "+", "5", "EOF"];
+
+        // 定義多步演示的步驟數據
+        const steps = [
+            {
+                desc: "<b>初始狀態：</b>遞迴下降剖析器準備開始解析輸入算式 <code>9 + 5</code>。兩個剖析器皆將<b>開始符號 (Start Symbol)</b> <code>E</code> 作為剖析起點置入其調用堆疊中。目前 Token 指標指向最左側的 <code>9</code>（尚未消耗任何 Token）。",
+                leftStack: ["expr()"],
+                rightStack: ["expr()"],
+                leftState: "正常運作",
+                rightState: "正常運作",
+                leftStateClass: "bg-slate-100 text-slate-700 border-slate-200",
+                rightStateClass: "bg-slate-100 text-slate-700 border-slate-200",
+                leftConsumed: 0,
+                rightConsumed: 0,
+                lookaheadIdx: 0,
+                leftMatch: {
+                    lookahead: "9",
+                    target: "expr()",
+                    reason: "呼叫 expr() 是因為 E 是該文法的開始符號 (Start Symbol)，所有語法分析程序必須由此進入並開始推導。"
+                },
+                rightMatch: {
+                    lookahead: "9",
+                    target: "expr()",
+                    reason: "呼叫 expr() 是因為 E 是該文法的開始符號 (Start Symbol)，所有語法分析程序必須由此進入並開始推導。"
+                }
+            },
+            {
+                desc: "<b>步驟 2 - 第一次函式推導展開：</b><br>• <b>左遞迴剖析器</b>：嘗試展開規則 E → E + T。為了執行此規則，它必須先調用右側最左端的非終端符號 <code>E</code>。因此它在尚未讀取或消耗任何 Token 之前，呼叫了 <code>expr()</code> 自身。<br>• <b>右遞迴剖析器</b>：套用消除左遞迴後的規則 E → T R。它呼叫 <code>term()</code> 用以匹配項，準備稍後再呼叫 <code>rest()</code>。",
+                leftStack: ["expr()", "expr()"],
+                rightStack: ["expr()", "term()"],
+                leftState: "進入遞迴 (無進度)",
+                rightState: "安全呼叫 term()",
+                leftStateClass: "bg-amber-50 text-amber-800 border-amber-200",
+                rightStateClass: "bg-blue-50 text-blue-800 border-blue-200",
+                leftConsumed: 0,
+                rightConsumed: 0,
+                lookaheadIdx: 0,
+                leftMatch: {
+                    lookahead: "9",
+                    target: "expr() 遞迴",
+                    reason: "套用規則 E → E + T。由於右側第一個符號是非終端符號 E，分析器被迫在未進行任何 Token 匹配的情況下，直接遞迴呼叫 expr()。"
+                },
+                rightMatch: {
+                    lookahead: "9",
+                    target: "term()",
+                    reason: "套用規則 E → T R。因為右側最左邊的非終端符號是 T，所以必須先呼叫 term() 以匹配一個完整的數字，隨後再由 rest() 處理餘項。"
+                }
+            },
+            {
+                desc: "<b>步驟 3 - 第二次推導與 Token 匹配：</b><br>• <b>左遞迴剖析器</b>：為了解析新進入的 <code>E</code>，它再次套用 E → E + T 並在不消耗任何 Token 的情況下，第三次呼叫了 <code>expr()</code>。<br>• <b>右遞迴剖析器</b>：呼叫的 <code>term()</code> 與當前 Lookahead <code>9</code> 比對。比對成功，執行 <code>match('9')</code>。<b>詞彙分析器</b>指標向右滑動，成功消耗第一個 Token <code>9</code>。隨後 <code>term()</code> 執行完畢退出堆疊，緊接著呼叫處理餘項的 <code>rest()</code>。",
+                leftStack: ["expr()", "expr()", "expr()"],
+                rightStack: ["expr()", "rest()"],
+                leftState: "二次遞迴 (無進度)",
+                rightState: "消耗 '9'，呼叫 rest()",
+                leftStateClass: "bg-amber-100 text-amber-800 border-amber-300",
+                rightStateClass: "bg-emerald-50 text-emerald-800 border-emerald-200",
+                leftConsumed: 0,
+                rightConsumed: 1,
+                lookaheadIdx: 1,
+                leftMatch: {
+                    lookahead: "9",
+                    target: "expr() 二次遞迴",
+                    reason: "再次套用規則 E → E + T。程序重複上一步的動作，再次在沒有消耗任何 Token 的情況下自我呼叫。此時可預見將進入無窮遞迴。"
+                },
+                rightMatch: {
+                    lookahead: "9",
+                    target: "term() 匹配成功",
+                    reason: "預看符號為 '9'，在 term() 內部匹配 T → digit (或 num) 成功。完成 match('9') 後，T 的工作結束並退出堆疊。接著依照 E → T R 順序，呼叫 rest()（即 R）處理餘下運算。"
+                }
+            },
+            {
+                desc: "<b>步驟 4 - 第三次推導與遞迴分支：</b><br>• <b>左遞迴剖析器</b>：依舊卡在最左端非終端符號 <code>E</code> 的展開上。第四次呼叫 <code>expr()</code>，堆疊深度持續累積，Lookahead 仍舊停滯在最左側的 <code>9</code>。<br>• <b>右遞迴剖析器</b>：<code>rest()</code> 檢測到 Lookahead 為 <code>+</code>，符合規則 R → + T R 的 <b>FIRST 集合</b>。剖析器執行 <code>match('+')</code>，成功消耗運算子 <code>+</code>（指標移至 <code>5</code>）。隨後呼叫 <code>term()</code> 處理加法右側的項。",
+                leftStack: ["expr()", "expr()", "expr()", "expr()"],
+                rightStack: ["expr()", "rest()", "term()"],
+                leftState: "三次遞迴 (無進度)",
+                rightState: "消耗 '+'，呼叫 term()",
+                leftStateClass: "bg-amber-200 text-amber-800 border-amber-400",
+                rightStateClass: "bg-emerald-100 text-emerald-800 border-emerald-300",
+                leftConsumed: 0,
+                rightConsumed: 2,
+                lookaheadIdx: 2,
+                leftMatch: {
+                    lookahead: "9",
+                    target: "expr() 三次遞迴",
+                    reason: "剖析器在不消耗輸入的情況下，第三次遞迴呼叫 expr()。堆疊深度已達 4 層，即將超出臨界限制。"
+                },
+                rightMatch: {
+                    lookahead: "+",
+                    target: "rest() → term()",
+                    reason: "當前 Lookahead 為 '+'。在 rest() 內部，由於 '+' 屬於 FIRST(+ T R) 集合，Parser 唯一決定選擇 R → + T R 規則。成功 match('+') 後，隨即呼叫 term() 以匹配下一個運算元。"
+                }
+            },
+            {
+                desc: "<b>步驟 5 - 異常觸發與安全進度：</b><br>• <b>左遞迴剖析器</b>：因在未消耗任何 Token（未有任何匹配進度）的狀態下，無限制自我調用，調用堆疊深度在此階段超過安全閾值，觸發編譯器致命錯誤——<b>堆疊溢位 (Stack Overflow)</b>，系統被迫異常中斷。<br>• <b>右遞迴剖析器</b>：呼叫的 <code>term()</code> 與 Lookahead <code>5</code> 比對成功，執行 <code>match('5')</code>，消耗 Token <code>5</code>（指標移至 <code>EOF</code>）。<code>term()</code> 退出堆疊後，遞迴呼叫 <code>rest()</code>。",
+                leftStack: ["STACK OVERFLOW!"],
+                rightStack: ["expr()", "rest()", "rest()"],
+                leftState: "異常中斷 (Stack Overflow)",
+                rightState: "消耗 '5'，呼叫 rest()",
+                leftStateClass: "bg-rose-100 text-rose-800 border-rose-300 font-bold animate-pulse",
+                rightStateClass: "bg-emerald-200 text-emerald-800 border-emerald-400",
+                leftConsumed: 0,
+                rightConsumed: 3,
+                lookaheadIdx: 3,
+                leftMatch: {
+                    lookahead: "9",
+                    target: "無 (崩潰)",
+                    reason: "偵測到堆疊無限制自我增長且未獲得任何解析進度（Progress Check 失敗），分析器拉起 Stack Overflow 異常，剖析中止。"
+                },
+                rightMatch: {
+                    lookahead: "5",
+                    target: "term() 匹配成功",
+                    reason: "當前 Lookahead 為 '5'，成功與 term() 預期之數字匹配。執行 match('5') 消耗之。接著 term() 完成並退棧，程序回到 rest()（即規則中的 R）以處理後續算式。"
+                }
+            },
+            {
+                desc: "<b>步驟 6 - 結尾消去規則套用：</b><br>• <b>左遞迴剖析器</b>：程序已異常終止，無法繼續處理後續算式。<br>• <b>右遞迴剖析器</b>：當前 Lookahead 指向結束標記 <code>EOF</code>。此時在 <code>rest()</code> 函數分支中，由於沒有更多的加減法，剖析器選擇其<b>預設路徑 (Default Path)</b>，套用 <b>ε-產生式</b> <code>R → ε</code>。此舉等同於不消耗任何 Token，直接安全退出 <code>rest()</code> 函數。",
+                leftStack: ["STACK OVERFLOW!"],
+                rightStack: ["expr()", "rest()"],
+                leftState: "異常中斷 (Stack Overflow)",
+                rightState: "套用 ε 產生式",
+                leftStateClass: "bg-rose-100 text-rose-800 border-rose-300 font-bold",
+                rightStateClass: "bg-indigo-50 text-indigo-800 border-indigo-200",
+                leftConsumed: 0,
+                rightConsumed: 3,
+                lookaheadIdx: 3,
+                leftMatch: {
+                    lookahead: "無",
+                    target: "無 (崩潰)",
+                    reason: "程序已因 Stack Overflow 終止執行。"
+                },
+                rightMatch: {
+                    lookahead: "EOF",
+                    target: "rest() → ε",
+                    reason: "預看符號為 EOF，與 '+' 或 '-' 規則均不匹配。在 rest() 中，Parser 選擇 ε 預設路徑，什麼都不做直接返回，這相當於在語法樹中消除該非終端符號。"
+                }
+            },
+            {
+                desc: "<b>步驟 7 - 剖析結果最終判定：</b><br>• <b>左遞迴剖析器</b>：剖析失敗。這證明了在<b>由上而下剖析法 (Top-Down Parsing)</b> 下，左遞迴文法是無法直接被遞迴下降分析器執行的。<br>• <b>右遞迴剖析器</b>：所有函數調用均已安全返回，堆疊清空至僅存底端結束標記。輸入流 <code>9 + 5</code> 已全數匹配，剖析成功並宣告<b>接受 (Accept)</b>。這印證了消除左遞迴對預測剖析器的必要性。",
+                leftStack: ["剖析失敗 (Failed)"],
+                rightStack: ["剖析接受 (Accept)"],
+                leftState: "程序崩潰",
+                rightState: "接受 (Accept)",
+                leftStateClass: "bg-rose-200 text-rose-900 border-rose-400",
+                rightStateClass: "bg-emerald-200 text-emerald-900 border-emerald-400 font-bold",
+                leftConsumed: 0,
+                rightConsumed: 3,
+                lookaheadIdx: 3,
+                leftMatch: {
+                    lookahead: "無",
+                    target: "剖析結束",
+                    reason: "因中途堆疊溢位，無法建立有效的語法分析樹，算式判定不合文法結構。"
+                },
+                rightMatch: {
+                    lookahead: "EOF",
+                    target: "剖析結束 (Accept)",
+                    reason: "所有非終端符號皆已成功展開與消去，堆疊底端標記與輸入流結束符號 EOF 成功會合。語法樹建構成功，接受此算式。"
+                }
+            }
+        ];
+
+        let currentStepIndex = 0;
+
+        // 初始化演示
+        function initDemo() {
+            currentStepIndex = 0;
+            renderStep();
+        }
+
+        // 渲染步驟
+        function renderStep() {
+            const step = steps[currentStepIndex];
+            const totalSteps = steps.length;
+
+            // 1. 更新進度文字
+            document.getElementById('step-counter').textContent = `當前進度：步驟 ${currentStepIndex + 1} / ${totalSteps}`;
+            document.getElementById('step-description').innerHTML = step.desc;
+
+            // 2. 控制按鈕狀態
+            const prevBtn = document.getElementById('btn-prev');
+            const nextBtn = document.getElementById('btn-next');
+
+            if (currentStepIndex === 0) {
+                prevBtn.disabled = true;
+                prevBtn.className = "flex-1 lg:flex-initial flex items-center justify-center gap-2 py-2.5 px-5 rounded-lg border border-slate-200 text-xs font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200";
+            } else {
+                prevBtn.disabled = false;
+                prevBtn.className = "flex-1 lg:flex-initial flex items-center justify-center gap-2 py-2.5 px-5 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200";
+            }
+
+            if (currentStepIndex === totalSteps - 1) {
+                nextBtn.disabled = true;
+                nextBtn.className = "flex-1 lg:flex-initial flex items-center justify-center gap-2 py-2.5 px-5 rounded-lg bg-slate-200 text-slate-400 text-xs font-medium cursor-not-allowed transition-all duration-200";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "flex-1 lg:flex-initial flex items-center justify-center gap-2 py-2.5 px-5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-all duration-200 shadow-sm";
+            }
+
+            // 3. 渲染 Token 串流
+            renderTokenStream(inputTokens, step.lookaheadIdx, step.leftConsumed, step.rightConsumed);
+
+            // 4. 渲染左側/右側堆疊
+            renderStack('left-stack', step.leftStack, currentStepIndex === 4 || currentStepIndex === 5 || currentStepIndex === 6);
+            renderStack('right-stack', step.rightStack, false, currentStepIndex === 6);
+
+            // 5. 更新文法匹配與決策面板
+            document.getElementById('left-match-lookahead').textContent = step.leftMatch.lookahead;
+            document.getElementById('left-match-target').textContent = step.leftMatch.target;
+            document.getElementById('left-match-reason').textContent = step.leftMatch.reason;
+
+            document.getElementById('right-match-lookahead').textContent = step.rightMatch.lookahead;
+            document.getElementById('right-match-target').textContent = step.rightMatch.target;
+            document.getElementById('right-match-reason').textContent = step.rightMatch.reason;
+
+            // 6. 更新狀態說明框
+            document.getElementById('left-consumed-count').textContent = step.leftConsumed;
+            document.getElementById('right-consumed-count').textContent = step.rightConsumed;
+
+            const leftStatus = document.getElementById('left-execution-state');
+            leftStatus.textContent = step.leftState;
+            leftStatus.className = "font-bold px-2 py-0.5 rounded border " + step.leftStateClass;
+
+            const rightStatus = document.getElementById('right-execution-state');
+            rightStatus.textContent = step.rightState;
+            rightStatus.className = "font-bold px-2 py-0.5 rounded border " + step.rightStateClass;
+        }
+
+        // 渲染 Token 串流輔助函式
+        function renderTokenStream(tokens, activeIdx, leftConsumed, rightConsumed) {
+            const container = document.getElementById('input-stream-container');
+            container.innerHTML = '';
+
+            tokens.forEach((token, idx) => {
+                const tokenWrapper = document.createElement('div');
+                tokenWrapper.className = "flex flex-col items-center gap-1";
+
+                const isLeftActive = idx === 0 && currentStepIndex < 4; // 左遞迴從未成功推進指標
+                const isRightActive = idx === activeIdx;
+
+                // 建立 Token 外框
+                const tokenBox = document.createElement('span');
+                tokenBox.className = "px-3 py-1.5 rounded text-xs transition-all duration-300 ";
+                
+                // 根據左右剖析器的讀取進度，給予不同色澤的背景
+                if (idx < activeIdx) {
+                    tokenBox.className += "bg-emerald-50 text-emerald-400 border border-emerald-100 line-through";
+                } else if (isRightActive && isLeftActive) {
+                    // 同步指向起點
+                    tokenBox.className += "bg-indigo-600 text-white font-bold ring-2 ring-indigo-300 ring-offset-1";
+                } else if (isRightActive) {
+                    tokenBox.className += "bg-emerald-600 text-white font-bold ring-2 ring-emerald-300 ring-offset-1";
+                } else if (isLeftActive) {
+                    tokenBox.className += "bg-rose-600 text-white font-bold ring-2 ring-rose-300 ring-offset-1";
+                } else {
+                    tokenBox.className += "bg-white text-slate-700 border border-slate-200";
+                }
+
+                tokenBox.textContent = token;
+                tokenWrapper.appendChild(tokenBox);
+
+                // 建立指向指標
+                const pointerGroup = document.createElement('div');
+                pointerGroup.className = "flex gap-1 h-3 items-center";
+
+                if (isLeftActive) {
+                    const leftPtr = document.createElement('div');
+                    leftPtr.className = "w-1.5 h-1.5 rounded-full bg-rose-500";
+                    pointerGroup.appendChild(leftPtr);
+                }
+                if (isRightActive) {
+                    const rightPtr = document.createElement('div');
+                    rightPtr.className = "w-1.5 h-1.5 rounded-full bg-emerald-500";
+                    pointerGroup.appendChild(rightPtr);
+                }
+
+                tokenWrapper.appendChild(pointerGroup);
+                container.appendChild(tokenWrapper);
+            });
+        }
+
+        // 渲染虛擬堆疊輔助函式
+        function renderStack(containerId, stackData, isLeftCrash = false, isRightAccept = false) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+
+            stackData.forEach((item, idx) => {
+                const itemBox = document.createElement('div');
+                itemBox.className = "stack-item w-full py-2.5 px-4 rounded-lg border text-center font-mono text-xs shadow-sm ";
+
+                if (isLeftCrash) {
+                    itemBox.className += "bg-rose-50 text-rose-800 border-rose-300 font-bold";
+                } else if (isRightAccept) {
+                    itemBox.className += "bg-emerald-50 text-emerald-800 border-emerald-300 font-bold";
+                } else {
+                    if (idx === stackData.length - 1) {
+                        // 堆疊最頂層高亮
+                        itemBox.className += "bg-white text-indigo-700 border-indigo-400 font-bold ring-1 ring-indigo-100";
+                    } else {
+                        itemBox.className += "bg-white text-slate-500 border-slate-200";
+                    }
+                }
+
+                itemBox.textContent = item;
+                container.appendChild(itemBox);
+            });
+        }
+
+        // 步進控制
+        function nextStep() {
+            if (currentStepIndex < steps.length - 1) {
+                currentStepIndex++;
+                renderStep();
+            }
+        }
+
+        // 向前控制
+        function prevStep() {
+            if (currentStepIndex > 0) {
+                currentStepIndex--;
+                renderStep();
+            }
+        }
+
+        // 重置演示
+        function resetDemo() {
+            initDemo();
+        }
+
+        // 頁面加載完成後啟動
+        window.onload = function() {
+            initDemo();
+        };
+    </script>
+</body>
+</html>

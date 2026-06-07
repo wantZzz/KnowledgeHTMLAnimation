@@ -1,0 +1,615 @@
+---
+layout: null
+title: "[Chapter 2.6 & 2.7] 詞彙掃描、保留字比對與多範疇符號表模擬"
+description: "重點說明應用巢狀範疇符號表的分析器在輸入多層巢狀程式時的行為，同時模擬詞彙掃描、賦值及查找"
+role: "primary"
+related: []
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>詞彙分析與巢狀符號表逐步執行模擬</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .token-slide {
+            transition: all 0.3s ease;
+        }
+        .code-line {
+            transition: all 0.2s ease;
+        }
+        .code-line.active {
+            background-color: #e0e7ff;
+            border-left: 4px solid #4f46e5;
+            color: #1e1b4b;
+            font-weight: 600;
+        }
+        .env-card {
+            transition: all 0.5s ease-in-out;
+        }
+        .env-card.active {
+            border-color: #4f46e5;
+            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.15);
+        }
+        .env-link {
+            stroke-dasharray: 4;
+            animation: dash 1s linear infinite;
+        }
+        @keyframes dash {
+            to {
+                stroke-dashoffset: -20;
+            }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col justify-between">
+
+    <!-- 頁首 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <h1 class="text-xl font-bold tracking-tight text-slate-900">編譯器設計：詞彙掃描、保留字比對與多範疇符號表模擬 (Lexer & Scope-based Symbol Tables)</h1>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-mono">Chapter 2.6 & 2.7</span>
+        </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
+        
+        <!-- 左側：輸入原始碼、程序與步驟說明 -->
+        <section class="lg:col-span-6 flex flex-col gap-4">
+            
+            <!-- 原始碼與當前掃描指針 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h3 class="font-bold text-slate-900 text-xs uppercase tracking-wider mb-2 text-slate-500">剖析目標原始碼 (Source Program)</h3>
+                <div class="bg-slate-950 p-4 rounded-lg font-mono text-xs text-slate-300 space-y-1 overflow-x-auto">
+                    <div class="code-line px-2 rounded" data-line="1">1: {</div>
+                    <div class="code-line px-2 rounded" data-line="2">2:     int i;</div>
+                    <div class="code-line px-2 rounded" data-line="3">3:     {</div>
+                    <div class="code-line px-2 rounded" data-line="4">4:         float i;</div>
+                    <div class="code-line px-2 rounded" data-line="5">5:         i = 12;</div>
+                    <div class="code-line px-2 rounded" data-line="6">6:     }</div>
+                    <div class="code-line px-2 rounded" data-line="7">7: }</div>
+                </div>
+            </div>
+
+            <!-- 步驟控制與學術解說 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex-grow flex flex-col justify-between min-h-[220px]">
+                <div>
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="font-bold text-slate-900 text-sm">剖析步驟與技術解析</h3>
+                        <span id="step-badge" class="text-xs bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded font-mono">步驟 1 / 10</span>
+                    </div>
+                    <p id="step-desc" class="text-xs text-slate-600 leading-relaxed min-h-[80px]">
+                        載入中...
+                    </p>
+                </div>
+
+                <!-- 語意動作與技術狀態面板 -->
+                <div class="mt-4 p-4 bg-indigo-50/50 rounded-lg border border-indigo-100 text-xs font-mono space-y-1.5">
+                    <div class="flex justify-between">
+                        <span>當前字元 (Peek):</span>
+                        <span id="state-peek" class="font-bold text-indigo-700">-</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>識別字/保留字查表 (Hashtable):</span>
+                        <span id="state-lexer-lookup" class="font-bold text-emerald-700">-</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>當前活躍符號表 (Active Env):</span>
+                        <span id="state-env" class="font-bold text-blue-700">-</span>
+                    </div>
+                    <div class="border-t border-indigo-100/60 my-1"></div>
+                    <div class="leading-normal">
+                        <span class="text-slate-500 block mb-0.5">最近巢狀規則 (get 遍歷路徑):</span>
+                        <span id="state-lookup-path" class="text-slate-600 font-sans">無變數查詢</span>
+                    </div>
+                </div>
+
+                <!-- 限制的一至兩個可互動元素 -->
+                <div class="border-t border-slate-100 pt-3 mt-4 flex items-center justify-between gap-3">
+                    <button id="btn-prev" onclick="prevStep()" class="flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg border border-slate-200 text-xs font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200" disabled>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+                        </svg>
+                        上一步 (Prev)
+                    </button>
+                    <button id="btn-next" onclick="nextStep()" class="flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-all duration-200 shadow-sm">
+                        下一步 (Next)
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- 右側：全域字串表（保留字優先）、活躍符號表鏈結、詞彙輸出 -->
+        <section class="lg:col-span-6 flex flex-col gap-4">
+            
+            <!-- 詞彙輸出暫存器 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div class="flex items-center justify-between text-xs text-slate-500 mb-2 font-semibold">
+                    <span>詞彙分析器輸出的 Token 串流</span>
+                    <span id="scan-status" class="text-indigo-600 font-mono">狀態：準備剖析</span>
+                </div>
+                <div class="flex flex-wrap items-center gap-2 font-mono min-h-[44px]" id="token-stream-container">
+                    <!-- 動態渲染輸出的 Token -->
+                </div>
+            </div>
+
+            <!-- 全域字串表與保留字（String Table） -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h3 class="font-bold text-slate-900 text-xs uppercase tracking-wider mb-2 text-slate-500">全域字串表 / 保留字優先表 (String Table)</h3>
+                <div class="grid grid-cols-3 gap-2 font-mono text-xs" id="string-table-view">
+                    <!-- 動態渲染保留字與識別字記錄 -->
+                </div>
+                <div class="mt-1.5 text-[10px] text-slate-400">說明：系統初始化時已預載 int 與 float 保留字。掃描到單字時，必須優先查此表以區分保留字與普通變數。</div>
+            </div>
+
+            <!-- 多範疇符號表 (Nested Symbol Tables Stack) -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex-grow flex flex-col">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-2 mb-3">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                        </svg>
+                        <span class="font-bold text-slate-900 text-sm">巢狀範疇符號表鏈結 (Chained Env Objects)</span>
+                    </div>
+                    <span class="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono">多個獨立表策略</span>
+                </div>
+                
+                <!-- 符號表動態容器 -->
+                <div class="flex-grow flex flex-col justify-start gap-4 min-h-[220px]" id="env-chain-view">
+                    <!-- 動態渲染 Env 表結構 -->
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- 頁尾 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500">
+        <div class="max-w-7xl mx-auto">
+             編譯器設計課程教材輔助軟體 - 詞彙分析與巢狀符號表動態模擬
+        </div>
+    </footer>
+
+    <script>
+        // 定義模擬的步驟
+        const sdtSteps = [
+            {
+                desc: "<b>初始狀態：</b>語法分析器（Parser）啟動，全域字串表（String Table）完成初始化，預載保留字 <code>int</code> 和 <code>float</code>。當前尚未進入任何巢狀區塊，符號表環境 <code>Env</code> 為空。字元指標指向第 1 行的左大括號 <code>{</code>。",
+                codeLine: 1,
+                peek: "{",
+                lexerLookup: "無",
+                activeEnvId: "null",
+                lookupPath: "無變數查詢",
+                tokens: [],
+                stringTable: [
+                    { lexeme: "int", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "float", tag: "KEYWORD", preloaded: true }
+                ],
+                envs: [],
+                status: "準備剖析首行"
+            },
+            {
+                desc: "<b>步驟 2 - 進入外層區塊：</b>語法分析器匹配到 <code>{</code>，表示進入一個全新的<b>範圍 (Scope)</b>。分析器動態建立一個全新的符號表 <code>Env(Env0)</code>。因為這是最外層，所以其 <code>prev</code> 指向 <code>null</code>。目前 <code>Env0</code> 還沒有儲存任何變數宣告。",
+                codeLine: 1,
+                peek: "{",
+                lexerLookup: "無",
+                activeEnvId: "Env0",
+                lookupPath: "無變數查詢",
+                tokens: ["{"],
+                stringTable: [
+                    { lexeme: "int", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "float", tag: "KEYWORD", preloaded: true }
+                ],
+                envs: [
+                    { id: "Env0", prev: "null", table: [] }
+                ],
+                status: "建立最外層 Env0"
+            },
+            {
+                desc: "<b>步驟 3 - 掃描保留字與變數宣告：</b>分析器讀入第 2 行。詞彙分析器（Lexer）首先掃描到單字 <code>int</code>。Lexer 查詢<b>字串表（String Table）</b>，成功匹配 <code>int</code> 的標籤為 <code>KEYWORD</code>。語法分析器隨後識別到這是一次變數宣告，指標向右移動，準備讀入被宣告的變數名稱。",
+                codeLine: 2,
+                peek: "i",
+                lexerLookup: "查詢 'int' -> 找到 (KEYWORD)",
+                activeEnvId: "Env0",
+                lookupPath: "無變數查詢",
+                tokens: ["{", "int"],
+                stringTable: [
+                    { lexeme: "int", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "float", tag: "KEYWORD", preloaded: true }
+                ],
+                envs: [
+                    { id: "Env0", prev: "null", table: [] }
+                ],
+                status: "識別保留字 'int'"
+            },
+            {
+                desc: "<b>步驟 4 - 變數註冊入外層符號表：</b>Lexer 掃描到變數名稱 <code>i</code>，查字串表未找到，說明 <code>i</code> 是新的普通識別字（Identifier）。Lexer 將 <code>i</code> 註冊入字串表，並回傳 <code>&lt;id, \"i\"&gt;</code>。隨後，語法分析器呼叫 <code>Env0.put(\"i\", Symbol(int))</code>，將變數 <code>i</code> 及其型別 <code>int</code> 正式寫入當前活躍的符號表 <code>Env0</code> 中。",
+                codeLine: 2,
+                peek: ";",
+                lexerLookup: "查詢 'i' -> 未找到 (註冊為 id)",
+                activeEnvId: "Env0",
+                lookupPath: "無變數查詢",
+                tokens: ["{", "int", "i", ";"],
+                stringTable: [
+                    { lexeme: "int", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "float", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "i", tag: "ID", preloaded: false }
+                ],
+                envs: [
+                    { id: "Env0", prev: "null", table: [{ name: "i", type: "int" }] }
+                ],
+                status: "Env0 註冊變數 i"
+            },
+            {
+                desc: "<b>步驟 5 - 進入巢狀內層區塊：</b>分析器讀到第 3 行的左大括號 <code>{</code>。這代表進入了更內一層的巢狀區塊。語法分析器再度動態配置一個全新的符號表 <code>Env(Env1)</code>。<b>關鍵鏈結機制：</b><code>Env1</code> 在初始化時，將其 <code>prev</code> 鏈結指針指向外層的符號表 <code>Env0</code>，形成鏈結鏈（Chained pointer）。目前 <code>Env1</code> 內容為空。",
+                codeLine: 3,
+                peek: "{",
+                lexerLookup: "無",
+                activeEnvId: "Env1",
+                lookupPath: "無變數查詢",
+                tokens: ["{", "int", "i", ";", "{"],
+                stringTable: [
+                    { lexeme: "int", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "float", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "i", tag: "ID", preloaded: false }
+                ],
+                envs: [
+                    { id: "Env1", prev: "Env0", table: [] },
+                    { id: "Env0", prev: "null", table: [{ name: "i", type: "int" }] }
+                ],
+                status: "建立內層 Env1， prev 指向 Env0"
+            },
+            {
+                desc: "<b>步驟 6 - 掃描內層保留字：</b>分析器讀取第 4 行，Lexer 掃描到單字 <code>float</code>。經查詢字串表，確認為 <code>KEYWORD</code>。語法分析器隨之判定這是一次內層變數宣告，指標向右移動。",
+                codeLine: 4,
+                peek: "i",
+                lexerLookup: "查詢 'float' -> 找到 (KEYWORD)",
+                activeEnvId: "Env1",
+                lookupPath: "無變數查詢",
+                tokens: ["{", "int", "i", ";", "{", "float"],
+                stringTable: [
+                    { lexeme: "int", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "float", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "i", tag: "ID", preloaded: false }
+                ],
+                envs: [
+                    { id: "Env1", prev: "Env0", table: [] },
+                    { id: "Env0", prev: "null", table: [{ name: "i", type: "int" }] }
+                ],
+                status: "識別保留字 'float'"
+            },
+            {
+                desc: "<b>步驟 7 - 內層同名變數覆蓋宣告：</b>Lexer 掃描到單字 <code>i</code>，此時在字串表中已有記錄，回傳 <code>&lt;id, \"i\"&gt;</code>。語法分析器在當前最內層符號表 <code>Env1</code> 中呼叫 <code>Env1.put(\"i\", Symbol(float))</code>。<b>型別覆蓋效應：</b>此時，外層與內層同時存在同名的變數 <code>i</code>。但在內層範圍中，這兩個 <code>i</code> 代表不同的實體，內層 <code>i</code> 的型別為 <code>float</code>。",
+                codeLine: 4,
+                peek: ";",
+                lexerLookup: "查詢 'i' -> 找到 (ID)",
+                activeEnvId: "Env1",
+                lookupPath: "無變數查詢",
+                tokens: ["{", "int", "i", ";", "{", "float", "i", ";"],
+                stringTable: [
+                    { lexeme: "int", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "float", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "i", tag: "ID", preloaded: false }
+                ],
+                envs: [
+                    { id: "Env1", prev: "Env0", table: [{ name: "i", type: "float" }] },
+                    { id: "Env0", prev: "null", table: [{ name: "i", type: "int" }] }
+                ],
+                status: "Env1 註冊 float i"
+            },
+            {
+                desc: "<b>步驟 8 - 最近巢狀規則查找 (變數使用與賦值)：</b>分析器處理第 5 行 <code>i = 12;</code>。這是一次變數的使用。語法分析器必須查詢 <code>i</code> 的宣告型別，呼叫 <code>Env1.get(\"i\")</code>。根據<b>最近巢狀規則 (Most Closely Nested Rule)</b>，查詢流程會從最內層的 <code>Env1</code> 雜湊表開始找起。在 <code>Env1</code> 中當場找到 <code>i</code> 且型別為 <code>float</code>，隨即返回該記錄。這避免了向外尋找，實現了局部作用域覆蓋。",
+                codeLine: 5,
+                peek: "=",
+                lexerLookup: "無",
+                activeEnvId: "Env1",
+                lookupPath: "查詢變數 'i'：\n1. 掃描 Env1 雜湊表 -> 找到！回傳 float 型別。(遍歷停止)",
+                tokens: ["{", "int", "i", ";", "{", "float", "i", ";", "i", "=", "12", ";"],
+                stringTable: [
+                    { lexeme: "int", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "float", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "i", tag: "ID", preloaded: false }
+                ],
+                envs: [
+                    { id: "Env1", prev: "Env0", table: [{ name: "i", type: "float", searched: true }] },
+                    { id: "Env0", prev: "null", table: [{ name: "i", type: "int" }] }
+                ],
+                status: "最近巢狀規則：在 Env1 找到 i"
+            },
+            {
+                desc: "<b>步驟 9 - 離開內層區塊：</b>分析器讀到第 6 行右大括號 <code>}</code>，代表內層區塊結束。在<b>多個獨立表策略</b>中，當離開範圍時，活躍符號表指針會沿著 <code>prev</code> 返回外層，即 <code>activeEnv = activeEnv.prev</code>（指向 <code>Env0</code>）。內層的符號表 <code>Env1</code> 隨即失效並被記憶體回收釋放。",
+                codeLine: 6,
+                peek: "}",
+                lexerLookup: "無",
+                activeEnvId: "Env0",
+                lookupPath: "無變數查詢",
+                tokens: ["{", "int", "i", ";", "{", "float", "i", ";", "i", "=", "12", "}", "}"],
+                stringTable: [
+                    { lexeme: "int", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "float", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "i", tag: "ID", preloaded: false }
+                ],
+                envs: [
+                    { id: "Env0", prev: "null", table: [{ name: "i", type: "int" }] }
+                ],
+                status: "釋放 Env1，返回 Env0"
+            },
+            {
+                desc: "<b>步驟 10 - 語法剖析與符號表生命週期完成：</b>讀到第 7 行的右大括號 <code>}</code>，外層區塊結束，活躍符號表指標重置為 <code>null</code>。整個源程序的巢狀型別安全性、變數宣告合法性已全部藉由多範疇符號表檢驗完畢，宣告剖析與翻譯圓滿結束。",
+                codeLine: 7,
+                peek: "EOF",
+                lexerLookup: "無",
+                activeEnvId: "null",
+                lookupPath: "無變數查詢",
+                tokens: ["{", "int", "i", ";", "{", "float", "i", ";", "i", "=", "12", "}", "}", "}"],
+                stringTable: [
+                    { lexeme: "int", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "float", tag: "KEYWORD", preloaded: true },
+                    { lexeme: "i", tag: "ID", preloaded: false }
+                ],
+                envs: [],
+                status: "剖析結束，释放所有 Env"
+            }
+        ];
+
+        let currentStepIndex = 0;
+
+        // 初始化
+        function initDemo() {
+            currentStepIndex = 0;
+            renderStep();
+        }
+
+        // 渲染指定步驟
+        function renderStep() {
+            const step = sdtSteps[currentStepIndex];
+            const totalSteps = sdtSteps.length;
+
+            // 1. 更新說明文字與步驟 badge
+            document.getElementById('step-badge').textContent = `步驟 ${currentStepIndex + 1} / ${totalSteps}`;
+            document.getElementById('step-desc').innerHTML = step.desc;
+
+            // 2. 高亮目前原始碼行
+            const lines = document.querySelectorAll('.code-line');
+            lines.forEach(l => l.classList.remove('active'));
+            const activeLineElement = document.querySelector(`[data-line="${step.codeLine}"]`);
+            if (activeLineElement) {
+                activeLineElement.classList.add('active');
+            }
+
+            // 3. 更新狀態面板
+            document.getElementById('state-peek').textContent = step.peek;
+            document.getElementById('state-lexer-lookup').textContent = step.lexerLookup;
+            document.getElementById('state-env').textContent = step.activeEnvId;
+            document.getElementById('state-lookup-path').textContent = step.lookupPath;
+
+            // 4. 控制按鈕狀態
+            const prevBtn = document.getElementById('btn-prev');
+            const nextBtn = document.getElementById('btn-next');
+
+            if (currentStepIndex === 0) {
+                prevBtn.disabled = true;
+                prevBtn.className = "flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg border border-slate-200 text-xs font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200";
+            } else {
+                prevBtn.disabled = false;
+                prevBtn.className = "flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200";
+            }
+
+            if (currentStepIndex === totalSteps - 1) {
+                nextBtn.disabled = true;
+                nextBtn.className = "flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-slate-200 text-slate-400 text-xs font-medium cursor-not-allowed transition-all duration-200";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-all duration-200 shadow-sm";
+            }
+
+            // 5. 渲染 Token 暫存器
+            renderTokenStream(step.tokens);
+
+            // 6. 渲染全域字串表
+            renderStringTable(step.stringTable);
+
+            // 7. 渲染符號表鏈結堆疊
+            renderEnvChain(step.envs, step.activeEnvId);
+        }
+
+        // 渲染 Token 輸出暫存器
+        function renderTokenStream(tokens) {
+            const container = document.getElementById('token-stream-container');
+            container.innerHTML = '';
+
+            if (tokens.length === 0) {
+                container.innerHTML = `<span class="text-xs text-slate-400 font-sans italic">暫無詞彙輸出</span>`;
+                return;
+            }
+
+            tokens.forEach(tok => {
+                const span = document.createElement('span');
+                // 區分保留字與運算子給予不同顏色
+                if (tok === "int" || tok === "float") {
+                    span.className = "px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs border border-blue-200";
+                } else if (tok === "{" || tok === "}" || tok === ";" || tok === "=") {
+                    span.className = "px-2 py-1 bg-slate-100 text-slate-700 rounded text-xs border border-slate-200";
+                } else {
+                    span.className = "px-2 py-1 bg-emerald-100 text-emerald-800 rounded text-xs border border-emerald-200 font-bold";
+                }
+                span.textContent = tok;
+                container.appendChild(span);
+            });
+
+            // 更新狀態列
+            const statusLabel = document.getElementById('scan-status');
+            const step = sdtSteps[currentStepIndex];
+            statusLabel.textContent = `狀態：${step.status}`;
+        }
+
+        // 渲染全域字串表
+        function renderStringTable(stringTable) {
+            const container = document.getElementById('string-table-view');
+            container.innerHTML = '';
+
+            stringTable.forEach(entry => {
+                const div = document.createElement('div');
+                div.className = "p-2 rounded border flex flex-col justify-between ";
+
+                if (entry.tag === "KEYWORD") {
+                    div.className += "bg-blue-50/50 border-blue-100 text-blue-900";
+                } else {
+                    div.className += "bg-emerald-50/50 border-emerald-100 text-emerald-900";
+                }
+
+                const lexemeSpan = document.createElement('span');
+                lexemeSpan.className = "font-bold text-sm";
+                lexemeSpan.textContent = `"${entry.lexeme}"`;
+                div.appendChild(lexemeSpan);
+
+                const tagSpan = document.createElement('span');
+                tagSpan.className = "text-[10px] text-slate-400";
+                tagSpan.textContent = entry.tag === "KEYWORD" ? "保留字" : "變數識別字";
+                div.appendChild(tagSpan);
+
+                container.appendChild(div);
+            });
+        }
+
+        // 渲染符號表鏈結堆疊
+        function renderEnvChain(envs, activeEnvId) {
+            const container = document.getElementById('env-chain-view');
+            container.innerHTML = '';
+
+            if (envs.length === 0) {
+                container.innerHTML = `
+                    <div class="flex-grow flex items-center justify-center border-2 border-dashed border-slate-200 rounded-lg p-6 text-center text-slate-400 text-xs">
+                        目前範圍內無活躍符號表 (Active Env is null)
+                    </div>
+                `;
+                return;
+            }
+
+            envs.forEach((env, idx) => {
+                const block = document.createElement('div');
+                block.className = "flex flex-col gap-2";
+
+                // Env 容器
+                const envCard = document.createElement('div');
+                envCard.className = "env-card bg-white border rounded-lg p-3.5 ";
+                
+                if (env.id === activeEnvId) {
+                    envCard.className += "active border-indigo-500 ring-2 ring-indigo-50 shadow-sm";
+                } else {
+                    envCard.className += "border-slate-200 opacity-60";
+                }
+
+                // 標題與 Prev 指標指標
+                const header = document.createElement('div');
+                header.className = "flex justify-between items-center mb-2 font-mono text-xs";
+                
+                const title = document.createElement('span');
+                title.className = "font-bold text-slate-800 flex items-center gap-1";
+                if (env.id === activeEnvId) {
+                    title.innerHTML = `<span class="inline-block w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span> ${env.id} (當前最內層)`;
+                } else {
+                    title.textContent = env.id;
+                }
+                header.appendChild(title);
+
+                const prevLink = document.createElement('span');
+                prevLink.className = "text-[10px] text-slate-400";
+                prevLink.textContent = `prev → ${env.prev}`;
+                header.appendChild(prevLink);
+                envCard.appendChild(header);
+
+                // 雜湊表內容
+                const tableContainer = document.createElement('div');
+                tableContainer.className = "bg-slate-50 border border-slate-100 rounded p-2.5 font-mono text-xs";
+
+                if (env.table.length === 0) {
+                    tableContainer.innerHTML = `<span class="text-slate-400 italic text-[11px]">雜湊表為空 (Hashtable is empty)</span>`;
+                } else {
+                    const grid = document.createElement('div');
+                    grid.className = "space-y-1";
+                    env.table.forEach(symbol => {
+                        const row = document.createElement('div');
+                        row.className = "flex justify-between items-center py-1 px-1.5 rounded ";
+                        
+                        if (symbol.searched) {
+                            row.className += "bg-indigo-100/50 text-indigo-900 border border-indigo-200";
+                        } else {
+                            row.className += "text-slate-700";
+                        }
+
+                        const name = document.createElement('span');
+                        name.className = "font-bold";
+                        name.textContent = symbol.name;
+                        row.appendChild(name);
+
+                        const type = document.createElement('span');
+                        type.className = "text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded";
+                        type.textContent = symbol.type;
+                        row.appendChild(type);
+
+                        grid.appendChild(row);
+                    });
+                    tableContainer.appendChild(grid);
+                }
+
+                envCard.appendChild(tableContainer);
+                block.appendChild(envCard);
+
+                // 鏈結關聯箭頭繪製 (利用 SVG 呈現指向關係)
+                if (idx < envs.length - 1) {
+                    const arrowSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+                    arrowSvg.setAttribute("class", "w-full h-4 text-indigo-400 flex justify-center");
+                    arrowSvg.setAttribute("viewBox", "0 0 100 16");
+
+                    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    line.setAttribute("x1", "50");
+                    line.setAttribute("y1", "0");
+                    line.setAttribute("x2", "50");
+                    line.setAttribute("y2", "16");
+                    line.setAttribute("stroke", "#818cf8");
+                    line.setAttribute("stroke-dasharray", "3,3");
+                    line.setAttribute("stroke-width", "2");
+                    line.setAttribute("class", "env-link");
+                    arrowSvg.appendChild(line);
+
+                    block.appendChild(arrowSvg);
+                }
+
+                container.appendChild(block);
+            });
+        }
+
+        // 步進控制
+        function nextStep() {
+            if (currentStepIndex < sdtSteps.length - 1) {
+                currentStepIndex++;
+                renderStep();
+            }
+        }
+
+        function prevStep() {
+            if (currentStepIndex > 0) {
+                currentStepIndex--;
+                renderStep();
+            }
+        }
+
+        function resetDemo() {
+            initDemo();
+        }
+
+        // 頁面加載完成後啟動
+        window.onload = function() {
+            initDemo();
+        };
+    </script>
+</body>
+</html>
