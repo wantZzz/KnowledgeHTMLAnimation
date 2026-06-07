@@ -1,0 +1,668 @@
+---
+layout: null
+title: "[Chapter 2.3] 語法指導翻譯與合成屬性"
+description: "模擬在建構完語法分析樹後如何走訪並根據設定規則逐步輸出結果"
+role: "primary"
+related: []
+tags: ["移動端友善"]
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>語法指導翻譯與屬性流動逐步建構演示</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .tree-node {
+            transition: all 0.5s ease-in-out;
+        }
+        .attribute-bubble {
+            animation: float-up 1.5s ease-out infinite;
+        }
+        @keyframes float-up {
+            0% {
+                transform: translateY(10px);
+                opacity: 0;
+            }
+            50% {
+                opacity: 1;
+            }
+            100% {
+                transform: translateY(-15px);
+                opacity: 0;
+            }
+        }
+        .pulse-pointer {
+            animation: pulse-ring 1.5s cubic-bezier(0.215, 0.610, 0.355, 1) infinite;
+        }
+        @keyframes pulse-ring {
+            0% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.7);
+            }
+            70% {
+                transform: scale(1);
+                box-shadow: 0 0 0 8px rgba(37, 99, 235, 0);
+            }
+            100% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(37, 99, 235, 0);
+            }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col justify-between">
+
+    <!-- 頁首 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <h1 class="text-xl font-bold tracking-tight text-slate-900">編譯器設計：語法指導翻譯與合成屬性（Syntax-Directed Translation）</h1>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-mono">Chapter 2.3 Syntax-Directed Translation</span>
+        </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
+        
+        <!-- 左側控制面板與說明 -->
+        <section class="lg:col-span-5 flex flex-col gap-4">
+            
+            <!-- 翻譯規則與目標說明 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-2">當前翻譯目標</h2>
+                <div class="flex items-center gap-3">
+                    <div class="bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg font-mono font-bold text-lg border border-blue-100">
+                        9 - 5 + 2
+                    </div>
+                    <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                    </svg>
+                    <div class="bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg font-mono font-bold text-lg border border-emerald-100">
+                        9 5 - 2 +
+                    </div>
+                </div>
+                <p class="text-xs text-slate-500 leading-relaxed mt-2">
+                    演示如何透過深先走訪（Depth-First Traversal）與合成屬性（Synthesized Attributes），將中序表達式翻譯為後序表示法。
+                </p>
+            </div>
+
+            <!-- 說明與步驟面板 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex-grow flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-bold text-slate-900 text-base" id="panel-title">屬性求值與走訪步驟</h3>
+                        <span id="step-badge" class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-mono">步驟 1 / 9</span>
+                    </div>
+                    
+                    <div id="grammar-box" class="bg-slate-50 p-3 rounded-lg border border-slate-100 mb-4 font-mono text-xs text-slate-600">
+                        <div class="font-bold text-slate-700 mb-1.5">語法指導定義 (Syntax-Directed Definition, SDD)：</div>
+                        <div class="space-y-1">
+                            <div class="flex justify-between border-b border-slate-100 pb-0.5">
+                                <span class="text-slate-800">E → E₁ + T</span>
+                                <span class="text-blue-600">E.t = E₁.t || T.t || "+"</span>
+                            </div>
+                            <div class="flex justify-between border-b border-slate-100 pb-0.5">
+                                <span class="text-slate-800">E → E₁ - T</span>
+                                <span class="text-blue-600">E.t = E₁.t || T.t || "-"</span>
+                            </div>
+                            <div class="flex justify-between border-b border-slate-100 pb-0.5">
+                                <span class="text-slate-800">E → T</span>
+                                <span class="text-blue-600">E.t = T.t</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-slate-800">T → num</span>
+                                <span class="text-blue-600">T.t = num.lexval</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="prose prose-sm text-slate-600 leading-relaxed min-h-[140px]" id="step-desc">
+                        載入中...
+                    </div>
+                </div>
+
+                <!-- 語意動作與屬性值面板 -->
+                <div class="mt-4 p-4 bg-blue-50/50 rounded-lg border border-blue-100 text-xs">
+                    <h4 class="font-bold text-blue-900 mb-2 flex items-center gap-1">
+                        <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        屬性合成狀態與語意動作 (Semantic Action)
+                    </h4>
+                    <div class="space-y-1.5 text-slate-700 font-mono">
+                        <div class="flex justify-between">
+                            <span>當前訪問節點 (Active Node):</span>
+                            <span id="active-node-display" class="font-bold text-blue-700">-</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>執行語意動作 (Action Triggered):</span>
+                            <span id="semantic-action-display" class="font-bold text-emerald-700">-</span>
+                        </div>
+                        <div class="border-t border-blue-100/60 my-1"></div>
+                        <div>
+                            <span class="text-slate-500 block mb-0.5">屬性合成邏輯與說明:</span>
+                            <p id="attribute-logic-display" class="text-slate-600 font-sans leading-normal">無</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 限制的一至兩個可互動元素 -->
+                <div class="border-t border-slate-100 pt-4 mt-6 flex items-center justify-between gap-3">
+                    <button id="btn-prev" onclick="prevStep()" class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200" disabled>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+                        </svg>
+                        上一步 (Prev)
+                    </button>
+                    <button id="btn-next" onclick="nextStep()" class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm">
+                        下一步 (Next)
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 後序輸出緩衝區 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h3 class="font-bold text-slate-900 text-sm mb-3">翻譯輸出緩衝區 (Translation Output Stream)</h3>
+                <div class="bg-slate-900 p-4 rounded-lg font-mono text-slate-200 min-h-[50px] flex items-center">
+                    <span class="text-slate-500 mr-2">$</span>
+                    <span id="output-stream" class="text-emerald-400 text-lg font-bold tracking-widest"></span>
+                    <span class="animate-pulse ml-1 text-slate-400">|</span>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- 右側視覺化畫布 -->
+        <section class="lg:col-span-7 bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+            <div class="flex flex-col gap-3 mb-4 border-b border-slate-100 pb-3">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                        </svg>
+                        <span class="font-bold text-slate-900 text-sm">深先走訪與合成屬性（流向指示）</span>
+                    </div>
+                    <button onclick="resetDemo()" class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H17"/>
+                        </svg>
+                        重置演示
+                    </button>
+                </div>
+            </div>
+
+            <!-- SVG 語法分析樹與屬性流動畫布 -->
+            <div class="relative w-full bg-slate-50 rounded-lg border border-slate-100 overflow-hidden flex items-center justify-center min-h-[460px]" id="canvas-container">
+                <svg id="tree-svg" class="w-full h-[460px]" viewBox="0 0 500 440">
+                    <!-- 動態渲染節點、連線、屬性標籤與方向指示 -->
+                </svg>
+            </div>
+            
+            <div class="mt-3 text-xs text-slate-400 flex items-center gap-1">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <span>說明：藍色虛線動畫箭頭代表合成屬性的向上傳遞方向（Attribute Flow），綠色虛線框代表當前遍歷核心。</span>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 頁尾 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500">
+        <div class="max-w-7xl mx-auto">
+             編譯器設計課程教材輔助軟體 - 語法指導翻譯與合成屬性
+        </div>
+    </footer>
+
+    <script>
+        // 語法指導翻譯逐步分析數據
+        const sdtSteps = [
+            {
+                desc: "<b>初始狀態：</b>語法分析樹已針對算式 <code>9 - 5 + 2</code> 建構完畢。深先走訪（Depth-First Traversal）從根節點 <code>E₀</code> 開始。此時尚未進行任何求值與翻譯，輸出緩衝區為空。",
+                activeNodeId: "e0",
+                triggeredAction: "無",
+                logic: "走訪器進入根節點 E₀。由於它是非終端符號，必須先遞迴向下訪問其子節點以合成屬性。",
+                output: "",
+                nodes: [
+                    { id: "e0", label: "E₀", x: 250, y: 50, type: "nonterminal", active: true },
+                    { id: "e1", label: "E₁", x: 155, y: 140, type: "nonterminal" },
+                    { id: "op_plus", label: "+", x: 250, y: 140, type: "operator" },
+                    { id: "t2", label: "T₂", x: 345, y: 140, type: "nonterminal" },
+                    { id: "e2", label: "E₂", x: 70, y: 230, type: "nonterminal" },
+                    { id: "op_minus", label: "-", x: 155, y: 230, type: "operator" },
+                    { id: "t1", label: "T₁", x: 235, y: 230, type: "nonterminal" },
+                    { id: "val9", label: "9", x: 70, y: 310, type: "terminal" },
+                    { id: "val5", label: "5", x: 235, y: 310, type: "terminal" },
+                    { id: "val2", label: "2", x: 345, y: 310, type: "terminal" }
+                ],
+                edges: [
+                    { from: "e0", to: "e1" }, { from: "e0", to: "op_plus" }, { from: "e0", to: "t2" },
+                    { from: "e1", to: "e2" }, { from: "e1", to: "op_minus" }, { from: "e1", to: "t1" },
+                    { from: "e2", to: "val9" }, { from: "t1", to: "val5" }, { from: "t2", to: "val2" }
+                ],
+                flows: []
+            },
+            {
+                desc: "<b>步驟 2 - 深入左側分支：</b>深先走訪遞迴向左下方移動。走訪器從根節點 <code>E₀</code> 移至其左子節點 <code>E₁</code>，再進一步向左移至更深層的 <code>E₂</code>。此時依然無法計算屬性，必須探尋至葉節點。",
+                activeNodeId: "e2",
+                triggeredAction: "無",
+                logic: "走訪器持續向左下方深入。E₁ 與 E₂ 分別在等待其子樹的屬性合成。",
+                output: "",
+                nodes: [
+                    { id: "e0", label: "E₀", x: 250, y: 50, type: "nonterminal" },
+                    { id: "e1", label: "E₁", x: 155, y: 140, type: "nonterminal", active: true },
+                    { id: "op_plus", label: "+", x: 250, y: 140, type: "operator" },
+                    { id: "t2", label: "T₂", x: 345, y: 140, type: "nonterminal" },
+                    { id: "e2", label: "E₂", x: 70, y: 230, type: "nonterminal", active: true },
+                    { id: "op_minus", label: "-", x: 155, y: 230, type: "operator" },
+                    { id: "t1", label: "T₁", x: 235, y: 230, type: "nonterminal" },
+                    { id: "val9", label: "9", x: 70, y: 310, type: "terminal" },
+                    { id: "val5", label: "5", x: 235, y: 310, type: "terminal" },
+                    { id: "val2", label: "2", x: 345, y: 310, type: "terminal" }
+                ],
+                edges: [
+                    { from: "e0", to: "e1" }, { from: "e0", to: "op_plus" }, { from: "e0", to: "t2" },
+                    { from: "e1", to: "e2" }, { from: "e1", to: "op_minus" }, { from: "e1", to: "t1" },
+                    { from: "e2", to: "val9" }, { from: "t1", to: "val5" }, { from: "t2", to: "val2" }
+                ],
+                flows: []
+            },
+            {
+                desc: "<b>步驟 3 - 匹配最左端終端符號：</b>走訪器抵達最左側的葉節點（終端符號）<code>9</code>。此時觸發規則 <code>T → num</code> 衍生之屬性指派。葉節點的數值被讀入並將其屬性值合成傳遞至上層節點 <code>E₂</code>。",
+                activeNodeId: "val9",
+                triggeredAction: "E₂.t = \"9\"",
+                logic: "葉節點 9 匹配成功。觸發 T.t = num.lexval 規則（此處經 E₂ → T 直接簡化表達）。合成屬性值 \"9\" 向上流向父節點 E₂。此時 \"9\" 被寫入輸出緩衝區。",
+                output: "9",
+                nodes: [
+                    { id: "e0", label: "E₀", x: 250, y: 50, type: "nonterminal" },
+                    { id: "e1", label: "E₁", x: 155, y: 140, type: "nonterminal" },
+                    { id: "op_plus", label: "+", x: 250, y: 140, type: "operator" },
+                    { id: "t2", label: "T₂", x: 345, y: 140, type: "nonterminal" },
+                    { id: "e2", label: "E₂.t = \"9\"", x: 70, y: 230, type: "nonterminal", active: true },
+                    { id: "op_minus", label: "-", x: 155, y: 230, type: "operator" },
+                    { id: "t1", label: "T₁", x: 235, y: 230, type: "nonterminal" },
+                    { id: "val9", label: "9", x: 70, y: 310, type: "terminal", active: true },
+                    { id: "val5", label: "5", x: 235, y: 310, type: "terminal" },
+                    { id: "val2", label: "2", x: 345, y: 310, type: "terminal" }
+                ],
+                edges: [
+                    { from: "e0", to: "e1" }, { from: "e0", to: "op_plus" }, { from: "e0", to: "t2" },
+                    { from: "e1", to: "e2" }, { from: "e1", to: "op_minus" }, { from: "e1", to: "t1" },
+                    { from: "e2", to: "val9", active: true }, { from: "t1", to: "val5" }, { from: "t2", to: "val2" }
+                ],
+                flows: [
+                    { fromId: "val9", toId: "e2", text: "\"9\"" }
+                ]
+            },
+            {
+                desc: "<b>步驟 4 - 訪問中間項：</b>深先走訪退回 <code>E₁</code>，隨後依照由左至右順序訪問中間的運算子節點 <code>-</code>，接著下降訪問右側子樹 <code>T₁</code> 及其葉節點 <code>5</code>。<code>T₁</code> 節點成功讀入並合成了屬性值 <code>\"5\"</code>。",
+                activeNodeId: "val5",
+                triggeredAction: "T₁.t = \"5\"",
+                logic: "終端節點 5 匹配成功。觸發 T₁.t = 5 語意動作，將數值儲存在屬性 T₁.t 中，準備向上提交。輸出緩衝區加入 \"5\"。",
+                output: "9 5",
+                nodes: [
+                    { id: "e0", label: "E₀", x: 250, y: 50, type: "nonterminal" },
+                    { id: "e1", label: "E₁", x: 155, y: 140, type: "nonterminal" },
+                    { id: "op_plus", label: "+", x: 250, y: 140, type: "operator" },
+                    { id: "t2", label: "T₂", x: 345, y: 140, type: "nonterminal" },
+                    { id: "e2", label: "E₂.t = \"9\"", x: 70, y: 230, type: "nonterminal" },
+                    { id: "op_minus", label: "-", x: 155, y: 230, type: "operator" },
+                    { id: "t1", label: "T₁.t = \"5\"", x: 235, y: 230, type: "nonterminal", active: true },
+                    { id: "val9", label: "9", x: 70, y: 310, type: "terminal" },
+                    { id: "val5", label: "5", x: 235, y: 310, type: "terminal", active: true },
+                    { id: "val2", label: "2", x: 345, y: 310, type: "terminal" }
+                ],
+                edges: [
+                    { from: "e0", to: "e1" }, { from: "e0", to: "op_plus" }, { from: "e0", to: "t2" },
+                    { from: "e1", to: "e2" }, { from: "e1", to: "op_minus" }, { from: "e1", to: "t1" },
+                    { from: "e2", to: "val9" }, { from: "t1", to: "val5", active: true }, { from: "t2", to: "val2" }
+                ],
+                flows: [
+                    { fromId: "val5", toId: "t1", text: "\"5\"" }
+                ]
+            },
+            {
+                desc: "<b>步驟 5 - 套用減法翻譯規則：</b>子節點 <code>E₂</code> 與 <code>T₁</code> 皆已完成屬性計算。走訪器返回父節點 <code>E₁</code>，並套用語意動作 <code>E₁.t = E₂.t || T₁.t || \"-\"</code>。此時將減法運算子 <code>-</code> 串接在後端，完成局部後序翻譯。",
+                activeNodeId: "e1",
+                triggeredAction: "E₁.t = \"9\" || \"5\" || \"-\"",
+                logic: "套用 E → E₁ - T 規則。E₁.t 屬性值由子節點合成，結果為 \"9 5 -\"。此時將運算子 \"-\" 輸出至緩衝區中。",
+                output: "9 5 -",
+                nodes: [
+                    { id: "e0", label: "E₀", x: 250, y: 50, type: "nonterminal" },
+                    { id: "e1", label: "E₁.t = \"9 5 -\"", x: 155, y: 140, type: "nonterminal", active: true },
+                    { id: "op_plus", label: "+", x: 250, y: 140, type: "operator" },
+                    { id: "t2", label: "T₂", x: 345, y: 140, type: "nonterminal" },
+                    { id: "e2", label: "E₂.t = \"9\"", x: 70, y: 230, type: "nonterminal" },
+                    { id: "op_minus", label: "-", x: 155, y: 230, type: "operator", active: true },
+                    { id: "t1", label: "T₁.t = \"5\"", x: 235, y: 230, type: "nonterminal" },
+                    { id: "val9", label: "9", x: 70, y: 310, type: "terminal" },
+                    { id: "val5", label: "5", x: 235, y: 310, type: "terminal" },
+                    { id: "val2", label: "2", x: 345, y: 310, type: "terminal" }
+                ],
+                edges: [
+                    { from: "e0", to: "e1" }, { from: "e0", to: "op_plus" }, { from: "e0", to: "t2" },
+                    { from: "e1", to: "e2", active: true }, { from: "e1", to: "op_minus" }, { from: "e1", to: "t1", active: true },
+                    { from: "e2", to: "val9" }, { from: "t1", to: "val5" }, { from: "t2", to: "val2" }
+                ],
+                flows: [
+                    { fromId: "e2", toId: "e1", text: "\"9\"" },
+                    { fromId: "t1", toId: "e1", text: "\"5\"" }
+                ]
+            },
+            {
+                desc: "<b>步驟 6 - 訪問右側項：</b>走訪器返回根節點 <code>E₀</code>，根據由左至右順序跨過 <code>+</code> 運算子，下降訪問右側子樹 <code>T₂</code>。最終訪問葉節點 <code>2</code>，其合成屬性值 <code>\"2\"</code> 被傳送至父節點 <code>T₂</code>。",
+                activeNodeId: "val2",
+                triggeredAction: "T₂.t = \"2\"",
+                logic: "葉節點 2 匹配成功。觸發 T₂.t = 2 語意動作，將屬性儲存於 T₂.t 中。緩衝區新增 \"2\"。",
+                output: "9 5 - 2",
+                nodes: [
+                    { id: "e0", label: "E₀", x: 250, y: 50, type: "nonterminal" },
+                    { id: "e1", label: "E₁.t = \"9 5 -\"", x: 155, y: 140, type: "nonterminal" },
+                    { id: "op_plus", label: "+", x: 250, y: 140, type: "operator" },
+                    { id: "t2", label: "T₂.t = \"2\"", x: 345, y: 140, type: "nonterminal", active: true },
+                    { id: "e2", label: "E₂.t = \"9\"", x: 70, y: 230, type: "nonterminal" },
+                    { id: "op_minus", label: "-", x: 155, y: 230, type: "operator" },
+                    { id: "t1", label: "T₁.t = \"5\"", x: 235, y: 230, type: "nonterminal" },
+                    { id: "val9", label: "9", x: 70, y: 310, type: "terminal" },
+                    { id: "val5", label: "5", x: 235, y: 310, type: "terminal" },
+                    { id: "val2", label: "2", x: 345, y: 310, type: "terminal", active: true }
+                ],
+                edges: [
+                    { from: "e0", to: "e1" }, { from: "e0", to: "op_plus" }, { from: "e0", to: "t2" },
+                    { from: "e1", to: "e2" }, { from: "e1", to: "op_minus" }, { from: "e1", to: "t1" },
+                    { from: "e2", to: "val9" }, { from: "t1", to: "val5" }, { from: "t2", to: "val2", active: true }
+                ],
+                flows: [
+                    { fromId: "val2", toId: "t2", text: "\"2\"" }
+                ]
+            },
+            {
+                desc: "<b>步驟 7 - 套用加法翻譯規則（屬性最終合成）：</b>此時，根節點 <code>E₀</code> 的兩大子節點屬性 <code>E₁.t</code> 與 <code>T₂.t</code> 皆已完全備齊。走訪器退回根節點，套用語意規則 <code>E₀.t = E₁.t || T₂.t || \"+\"</code>。",
+                activeNodeId: "e0",
+                triggeredAction: "E₀.t = \"9 5 -\" || \"2\" || \"+\"",
+                logic: "執行 E → E₁ + T 規則。E₀.t 將兩端子節點屬性與加號字串串接。輸出緩衝區輸出最後一個運算子 \"+\"。",
+                output: "9 5 - 2 +",
+                nodes: [
+                    { id: "e0", label: "E₀.t = \"9 5 - 2 +\"", x: 250, y: 50, type: "nonterminal", active: true },
+                    { id: "e1", label: "E₁.t = \"9 5 -\"", x: 155, y: 140, type: "nonterminal" },
+                    { id: "op_plus", label: "+", x: 250, y: 140, type: "operator", active: true },
+                    { id: "t2", label: "T₂.t = \"2\"", x: 345, y: 140, type: "nonterminal" },
+                    { id: "e2", label: "E₂.t = \"9\"", x: 70, y: 230, type: "nonterminal" },
+                    { id: "op_minus", label: "-", x: 155, y: 230, type: "operator" },
+                    { id: "t1", label: "T₁.t = \"5\"", x: 235, y: 230, type: "nonterminal" },
+                    { id: "val9", label: "9", x: 70, y: 310, type: "terminal" },
+                    { id: "val5", label: "5", x: 235, y: 310, type: "terminal" },
+                    { id: "val2", label: "2", x: 345, y: 310, type: "terminal" }
+                ],
+                edges: [
+                    { from: "e0", to: "e1", active: true }, { from: "e0", to: "op_plus" }, { from: "e0", to: "t2", active: true },
+                    { from: "e1", to: "e2" }, { from: "e1", to: "op_minus" }, { from: "e1", to: "t1" },
+                    { from: "e2", to: "val9" }, { from: "t1", to: "val5" }, { from: "t2", to: "val2" }
+                ],
+                flows: [
+                    { fromId: "e1", toId: "e0", text: "\"9 5 -\"" },
+                    { fromId: "t2", toId: "e0", text: "\"2\"" }
+                ]
+            },
+            {
+                desc: "<b>步驟 8 - 走訪完畢：</b>深先遍歷走訪結束，所有節點均已完成拜訪。根節點 <code>E₀.t</code> 的屬性包含了最終翻譯完畢的後序表達式 <code>\"9 5 - 2 +\"</code>。屬性成功在不依賴任何括號的情況下，完整表述了原本中序運算的優先順序。",
+                activeNodeId: "e0",
+                triggeredAction: "翻譯成功結束",
+                logic: "深先走訪退出。所有的合成屬性流向（自底向上）與翻譯順序（自頂向下遍歷）完美契合。翻譯系統輸出完整的 postfix 成果。",
+                output: "9 5 - 2 +",
+                nodes: [
+                    { id: "e0", label: "E₀.t = \"9 5 - 2 +\"", x: 250, y: 50, type: "nonterminal", highlight: true },
+                    { id: "e1", label: "E₁.t = \"9 5 -\"", x: 155, y: 140, type: "nonterminal" },
+                    { id: "op_plus", label: "+", x: 250, y: 140, type: "operator" },
+                    { id: "t2", label: "T₂.t = \"2\"", x: 345, y: 140, type: "nonterminal" },
+                    { id: "e2", label: "E₂.t = \"9\"", x: 70, y: 230, type: "nonterminal" },
+                    { id: "op_minus", label: "-", x: 155, y: 230, type: "operator" },
+                    { id: "t1", label: "T₁.t = \"5\"", x: 235, y: 230, type: "nonterminal" },
+                    { id: "val9", label: "9", x: 70, y: 310, type: "terminal" },
+                    { id: "val5", label: "5", x: 235, y: 310, type: "terminal" },
+                    { id: "val2", label: "2", x: 345, y: 310, type: "terminal" }
+                ],
+                edges: [
+                    { from: "e0", to: "e1", highlight: true }, { from: "e0", to: "op_plus", highlight: true }, { from: "e0", to: "t2", highlight: true },
+                    { from: "e1", to: "e2", highlight: true }, { from: "e1", to: "op_minus", highlight: true }, { from: "e1", to: "t1", highlight: true },
+                    { from: "e2", to: "val9", highlight: true }, { from: "t1", to: "val5", highlight: true }, { from: "t2", to: "val2", highlight: true }
+                ],
+                flows: []
+            }
+        ];
+
+        let currentStepIndex = 0;
+
+        // 初始化演示
+        function initDemo() {
+            currentStepIndex = 0;
+            renderStep();
+        }
+
+        // 渲染指定步驟
+        function renderStep() {
+            const step = sdtSteps[currentStepIndex];
+            const totalSteps = sdtSteps.length;
+
+            // 1. 更新說明文字
+            document.getElementById('step-badge').textContent = `步驟 ${currentStepIndex + 1} / ${totalSteps}`;
+            document.getElementById('step-desc').innerHTML = step.desc;
+            document.getElementById('output-stream').textContent = step.output;
+
+            // 2. 更新狀態與動作面板
+            document.getElementById('active-node-display').textContent = step.activeNodeId.toUpperCase();
+            document.getElementById('semantic-action-display').textContent = step.triggeredAction;
+            document.getElementById('attribute-logic-display').textContent = step.logic;
+
+            // 3. 控制按鈕狀態
+            const prevBtn = document.getElementById('btn-prev');
+            const nextBtn = document.getElementById('btn-next');
+
+            if (currentStepIndex === 0) {
+                prevBtn.disabled = true;
+                prevBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200";
+            } else {
+                prevBtn.disabled = false;
+                prevBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200";
+            }
+
+            if (currentStepIndex === totalSteps - 1) {
+                nextBtn.disabled = true;
+                nextBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-slate-200 text-slate-400 text-sm font-medium cursor-not-allowed transition-all duration-200";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm";
+            }
+
+            // 4. 畫布圖形與流動線段繪製
+            renderCanvas(step);
+        }
+
+        // SVG 圖形繪製邏輯
+        function renderCanvas(step) {
+            const svg = document.getElementById('tree-svg');
+            svg.innerHTML = ''; // 清空畫布
+
+            const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+            svg.appendChild(defs);
+
+            // 1. 繪製連線（Edges）
+            step.edges.forEach(edge => {
+                const fromNode = step.nodes.find(n => n.id === edge.from);
+                const toNode = step.nodes.find(n => n.id === edge.to);
+                
+                if (fromNode && toNode) {
+                    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    line.setAttribute("x1", fromNode.x);
+                    line.setAttribute("y1", fromNode.y);
+                    line.setAttribute("x2", toNode.x);
+                    line.setAttribute("y2", toNode.y);
+                    
+                    if (edge.active) {
+                        line.setAttribute("stroke", "#3b82f6");
+                        line.setAttribute("stroke-width", "3");
+                    } else if (edge.highlight) {
+                        line.setAttribute("stroke", "#10b981");
+                        line.setAttribute("stroke-width", "2");
+                    } else {
+                        line.setAttribute("stroke", "#cbd5e1");
+                        line.setAttribute("stroke-width", "1.5");
+                    }
+                    svg.appendChild(line);
+                }
+            });
+
+            // 2. 繪製屬性流動動畫箭頭與屬性傳遞標記 (Attribute Flow Arrows)
+            step.flows.forEach(flow => {
+                const fromNode = step.nodes.find(n => n.id === flow.fromId);
+                const toNode = step.nodes.find(n => n.id === flow.toId);
+                
+                if (fromNode && toNode) {
+                    // 繪製偏置的曲線箭頭以標明屬性流動的方向
+                    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                    const offset = 18;
+                    // 將流向稍微向右偏，避免蓋住原來的語法樹骨架線
+                    const x1 = fromNode.x + offset;
+                    const y1 = fromNode.y - offset;
+                    const x2 = toNode.x + offset;
+                    const y2 = toNode.y + offset;
+                    
+                    path.setAttribute("d", `M ${x1} ${y1} Q ${(x1+x2)/2 + 15} ${(y1+y2)/2} ${x2} ${y2}`);
+                    path.setAttribute("stroke", "#3b82f6");
+                    path.setAttribute("stroke-width", "2");
+                    path.setAttribute("stroke-dasharray", "4,4");
+                    path.setAttribute("fill", "none");
+                    path.setAttribute("class", "attribute-flow-path");
+                    svg.appendChild(path);
+
+                    // 繪製漂浮屬性值的文字框
+                    const attrTextGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                    attrTextGroup.setAttribute("class", "attribute-bubble");
+                    
+                    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                    text.setAttribute("x", (x1+x2)/2 + 20);
+                    text.setAttribute("y", (y1+y2)/2);
+                    text.setAttribute("fill", "#2563eb");
+                    text.setAttribute("font-size", "11px");
+                    text.setAttribute("font-family", "monospace");
+                    text.setAttribute("font-weight", "bold");
+                    text.textContent = flow.text;
+                    attrTextGroup.appendChild(text);
+                    svg.appendChild(attrTextGroup);
+                }
+            });
+
+            // 3. 繪製節點（Nodes）
+            step.nodes.forEach(node => {
+                const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+
+                let rectColor = "#ffffff";
+                let strokeColor = "#64748b";
+                let strokeWidth = "1.5";
+                let textColor = "#0f172a";
+                let fontWeight = "normal";
+                let rx = "6";
+
+                if (node.type === "terminal") {
+                    rectColor = "#f8fafc";
+                    strokeColor = "#94a3b8";
+                    fontWeight = "bold";
+                } else if (node.type === "operator") {
+                    rectColor = "#f1f5f9";
+                    strokeColor = "#cbd5e1";
+                    fontWeight = "bold";
+                }
+
+                // 當前被訪問/高亮的活動節點
+                if (node.active) {
+                    strokeColor = "#2563eb";
+                    strokeWidth = "2.5";
+                    textColor = "#1d4ed8";
+                    fontWeight = "bold";
+
+                    // 為活動節點的外圈繪製虛線波紋
+                    const pulseRing = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                    const ringSize = 12;
+                    pulseRing.setAttribute("x", node.x - (100 + ringSize) / 2);
+                    pulseRing.setAttribute("y", node.y - (36 + ringSize) / 2);
+                    pulseRing.setAttribute("width", 100 + ringSize);
+                    pulseRing.setAttribute("height", 36 + ringSize);
+                    pulseRing.setAttribute("rx", "10");
+                    pulseRing.setAttribute("fill", "none");
+                    pulseRing.setAttribute("stroke", "#3b82f6");
+                    pulseRing.setAttribute("stroke-width", "1.5");
+                    pulseRing.setAttribute("stroke-dasharray", "4,3");
+                    group.appendChild(pulseRing);
+                }
+
+                if (node.highlight) {
+                    rectColor = "#ecfdf5";
+                    strokeColor = "#10b981";
+                    strokeWidth = "2.5";
+                    textColor = "#065f46";
+                    fontWeight = "bold";
+                }
+
+                // 繪製節點框
+                const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                const rectWidth = 100;
+                const rectHeight = 36;
+                rect.setAttribute("x", node.x - rectWidth / 2);
+                rect.setAttribute("y", node.y - rectHeight / 2);
+                rect.setAttribute("width", rectWidth);
+                rect.setAttribute("height", rectHeight);
+                rect.setAttribute("rx", rx);
+                rect.setAttribute("fill", rectColor);
+                rect.setAttribute("stroke", strokeColor);
+                rect.setAttribute("stroke-width", strokeWidth);
+                group.appendChild(rect);
+
+                // 繪製節點標籤
+                const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                text.setAttribute("x", node.x);
+                text.setAttribute("y", node.y + 4);
+                text.setAttribute("text-anchor", "middle");
+                text.setAttribute("fill", textColor);
+                text.setAttribute("font-size", "11px");
+                text.setAttribute("font-family", "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace");
+                text.setAttribute("font-weight", fontWeight);
+                text.textContent = node.label;
+                group.appendChild(text);
+
+                svg.appendChild(group);
+            });
+        }
+
+        // 向後操作
+        function nextStep() {
+            if (currentStepIndex < sdtSteps.length - 1) {
+                currentStepIndex++;
+                renderStep();
+            }
+        }
+
+        // 向前操作
+        function prevStep() {
+            if (currentStepIndex > 0) {
+                currentStepIndex--;
+                renderStep();
+            }
+        }
+
+        // 重置演示
+        function resetDemo() {
+            initDemo();
+        }
+
+        // 初始化載入
+        window.onload = function() {
+            initDemo();
+        };
+    </script>
+</body>
+</html>

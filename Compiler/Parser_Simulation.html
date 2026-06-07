@@ -1,0 +1,694 @@
+---
+layout: null
+title: "[Chapter 2.2] 運算子優先權與無二義性文法"
+description: "模擬語法分析器"
+role: "primary"
+related: []
+tags: ["移動端友善"]
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>運算子優先權與語法分析樹逐步建構演示</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .tree-node {
+            transition: all 0.5s ease-in-out;
+        }
+        .highlight-edge {
+            stroke: #2563eb;
+            stroke-width: 3;
+            stroke-dasharray: 5;
+            animation: dash-animation 1s linear infinite;
+        }
+        @keyframes dash-animation {
+            to {
+                stroke-dashoffset: -10;
+            }
+        }
+        .token-slide {
+            transition: all 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col justify-between">
+
+    <!-- 頁首 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <h1 class="text-xl font-bold tracking-tight text-slate-900">編譯器設計：運算子優先權與無二義性文法（Precedence & Unambiguous Grammar）</h1>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-mono">Chapter 2.2 Syntax Definition</span>
+        </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
+        
+        <!-- 左側控制面板與說明 -->
+        <section class="lg:col-span-5 flex flex-col gap-4">
+            
+            <!-- 算式選擇切換區 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">請選擇分析目標算式</h2>
+                <div class="grid grid-cols-2 gap-2">
+                    <button id="btn-expr-1" onclick="selectExpression('expr1')" class="flex flex-col items-center justify-center p-3 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-blue-600 bg-blue-50 text-blue-700">
+                        <span class="font-mono font-bold text-base">3 + 5 * 2</span>
+                        <span class="text-[10px] text-blue-500 mt-1">加法在左，乘法在右</span>
+                    </button>
+                    <button id="btn-expr-2" onclick="selectExpression('expr2')" class="flex flex-col items-center justify-center p-3 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-slate-200 text-slate-600 hover:bg-slate-50">
+                        <span class="font-mono font-bold text-base">6 * 4 + 3</span>
+                        <span class="text-[10px] text-slate-500 mt-1">乘法在左，加法在右</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 說明與步驟面板 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex-grow flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-bold text-slate-900 text-base" id="panel-title">優先權分析步驟</h3>
+                        <span id="step-badge" class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-mono">步驟 1 / 5</span>
+                    </div>
+                    
+                    <div id="grammar-box" class="bg-slate-50 p-3 rounded-lg border border-slate-100 mb-4 font-mono text-xs text-slate-600">
+                        <div class="font-bold text-slate-700 mb-1.5">分層無二義性文法 (Layered Grammar)：</div>
+                        <div class="space-y-0.5">
+                            <div>E → E + T  |  T  <span class="text-slate-400">（E 處理低優先權加法）</span></div>
+                            <div>T → T * F  |  F  <span class="text-slate-400">（T 處理高優先權乘法）</span></div>
+                            <div>F → num          <span class="text-slate-400">（F 處理基本數值）</span></div>
+                        </div>
+                    </div>
+
+                    <div class="prose prose-sm text-slate-600 leading-relaxed min-h-[140px]" id="step-desc">
+                        載入中...
+                    </div>
+                </div>
+
+                <!-- 語法決策分析面板 -->
+                <div class="mt-4 p-4 bg-blue-50/50 rounded-lg border border-blue-100 text-xs">
+                    <h4 class="font-bold text-blue-900 mb-2 flex items-center gap-1">
+                        <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        語法決策與掃描分析 (Parsing Decision)
+                    </h4>
+                    <div class="space-y-1.5 text-slate-700 font-mono">
+                        <div class="flex justify-between">
+                            <span>當前預看符號 (Lookahead Token):</span>
+                            <span id="decision-lookahead" class="font-bold text-blue-700">-</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>觸發產生式規則 (Rule Triggered):</span>
+                            <span id="decision-rule" class="font-bold text-emerald-700">-</span>
+                        </div>
+                        <div class="border-t border-blue-100/60 my-1"></div>
+                        <div>
+                            <span class="text-slate-500 block mb-0.5">分析與判斷邏輯:</span>
+                            <p id="decision-judgment" class="text-slate-600 font-sans leading-normal">無</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 限制的一至兩個可互動元素 -->
+                <div class="border-t border-slate-100 pt-4 mt-6 flex items-center justify-between gap-3">
+                    <button id="btn-prev" onclick="prevStep()" class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200" disabled>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+                        </svg>
+                        上一步 (Prev)
+                    </button>
+                    <button id="btn-next" onclick="nextStep()" class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm">
+                        下一步 (Next)
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 求值狀態與比較面板 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h3 class="font-bold text-slate-900 text-sm mb-3">運算求值狀態</h3>
+                <div class="space-y-2 text-sm">
+                    <div class="flex justify-between py-1 border-b border-slate-100">
+                        <span class="text-slate-500">輸入字串：</span>
+                        <span id="current-expr-display" class="font-mono font-bold text-slate-800">-</span>
+                    </div>
+                    <div class="flex justify-between py-1 border-b border-slate-100">
+                        <span class="text-slate-500">計算執行路徑：</span>
+                        <span id="eval-process" class="font-mono text-slate-800">未開始</span>
+                    </div>
+                    <div class="flex justify-between py-1">
+                        <span class="text-slate-500">求值結果：</span>
+                        <span id="eval-result" class="font-mono font-bold text-slate-800">-</span>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- 右側視覺化畫布 -->
+        <section class="lg:col-span-7 bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+            <div class="flex flex-col gap-3 mb-4 border-b border-slate-100 pb-3">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                        </svg>
+                        <span class="font-bold text-slate-900 text-sm">詞彙分析與語法分析樹</span>
+                    </div>
+                    <button onclick="resetDemo()" class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H17"/>
+                        </svg>
+                        重置演示
+                    </button>
+                </div>
+
+                <!-- 詞彙分析掃描軌道 -->
+                <div class="bg-slate-100 p-3 rounded-lg border border-slate-200">
+                    <div class="flex items-center justify-between text-xs text-slate-500 mb-1.5 font-semibold">
+                        <span>詞彙掃描器暫存器 (Token Stream)</span>
+                        <span id="scan-status" class="text-blue-600 font-mono">狀態: 掃描中</span>
+                    </div>
+                    <div class="flex items-center gap-2 font-mono" id="token-stream-container">
+                        <!-- 動態渲染 Token -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- SVG 語法分析樹畫布 -->
+            <div class="relative w-full bg-slate-50 rounded-lg border border-slate-100 overflow-hidden flex items-center justify-center min-h-[440px]" id="canvas-container">
+                <svg id="tree-svg" class="w-full h-[440px]" viewBox="0 0 500 420">
+                    <!-- 動態渲染節點與連線 -->
+                </svg>
+            </div>
+            
+            <div class="mt-3 text-xs text-slate-400 flex items-center gap-1">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <span>說明：內部節點以灰色/藍色框表示，葉節點代表已匹配的終端符號。</span>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 頁尾 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500">
+        <div class="max-w-7xl mx-auto">
+             編譯器設計課程教材輔助軟體 - 語法定義與運算子優先權
+        </div>
+    </footer>
+
+    <script>
+        // 資料庫：包含兩種算式的逐步推導數據
+        const exprData = {
+            expr1: {
+                expression: "3 + 5 * 2",
+                tokens: ["3", "+", "5", "*", "2", "EOF"],
+                steps: [
+                    {
+                        desc: "<b>初始狀態：</b>語法分析器（Parser）啟動，準備自上而下解析算術運算式。讀入第一個預看符號（Lookahead）為 <code>3</code>。Parser 會將表示表達式的起始符號 <code>E</code> 置於樹的根部。",
+                        lookaheadIdx: 0,
+                        lookaheadText: "3",
+                        triggeredRule: "初始化 E (起始符號)",
+                        judgment: "讀入第一個 Token [3]。為了配合運算子優先權的處理，分析器必須從代表最外層、優先權最低的非終端符號 E 開始展開。",
+                        nodes: [
+                            { id: "e1", label: "E (根)", x: 250, y: 40, type: "nonterminal", active: true }
+                        ],
+                        edges: [],
+                        evalProcess: "尚未求值",
+                        evalResult: "-"
+                    },
+                    {
+                        desc: "<b>步驟 2 - 展開加法運算：</b>Parser 偵測到加法運算子 <code>+</code>。因為加法優先權低於乘法，所以加法運算子 <code>+</code> 會先在最上層展開。Parser 選擇規則 <code>E → E + T</code>，將右側子樹交給處理中等優先權的 <code>T</code>（項），這將乘法動作隔離在右側分支。",
+                        lookaheadIdx: 1,
+                        lookaheadText: "+",
+                        triggeredRule: "E → E + T",
+                        judgment: "預看符號為 '+'。文法規則中 E 負責低優先權的加減法。分析器選擇展開為 E + T，把右側表示乘除的潛在項 T 獨立出來。",
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 40, type: "nonterminal" },
+                            { id: "e2", label: "E", x: 140, y: 120, type: "nonterminal", active: true },
+                            { id: "op1", label: "+", x: 250, y: 120, type: "terminal", active: true },
+                            { id: "t1", label: "T", x: 360, y: 120, type: "nonterminal", active: true }
+                        ],
+                        edges: [
+                            { from: "e1", to: "e2" },
+                            { from: "e1", to: "op1" },
+                            { from: "e1", to: "t1" }
+                        ],
+                        evalProcess: "E(左) + T(右)",
+                        evalResult: "-"
+                    },
+                    {
+                        desc: "<b>步驟 3 - 展開乘法運算：</b>Parser 掃描到乘法運算子 <code>*</code>。此時右側非終端符號 <code>T</code> 必須被展開。為了解析 <code>5 * 2</code>，分析器觸發專為乘法設計的規則 <code>T → T * F</code>。這使得 <code>*</code> 運算子置於比 <code>+</code> 更深的葉端分岔，保證其擁有更高的優先權。",
+                        lookaheadIdx: 3,
+                        lookaheadText: "*",
+                        triggeredRule: "T → T * F",
+                        judgment: "預看符號為 '*'。在 T 的分支中發現乘法，觸發規則 T → T * F。此展開使 '*' 的節點深度（y 座標 200）大於 '+' 的節點深度（y 座標 120），決定了先乘後加的結構。",
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 40, type: "nonterminal" },
+                            { id: "e2", label: "E", x: 140, y: 120, type: "nonterminal" },
+                            { id: "op1", label: "+", x: 250, y: 120, type: "terminal" },
+                            { id: "t1", label: "T", x: 360, y: 120, type: "nonterminal" },
+                            
+                            { id: "t2", label: "T", x: 300, y: 200, type: "nonterminal", active: true },
+                            { id: "op2", label: "*", x: 360, y: 200, type: "terminal", active: true },
+                            { id: "f1", label: "F", x: 420, y: 200, type: "nonterminal", active: true }
+                        ],
+                        edges: [
+                            { from: "e1", to: "e2" },
+                            { from: "e1", to: "op1" },
+                            { from: "e1", to: "t1" },
+                            { from: "t1", to: "t2" },
+                            { from: "t1", to: "op2" },
+                            { from: "t1", to: "f1" }
+                        ],
+                        evalProcess: "E(左) + (T(右) * F(右右))",
+                        evalResult: "-"
+                    },
+                    {
+                        desc: "<b>步驟 4 - 展開並匹配數值：</b>Parser 依序將其餘的非終端符號透過 <code>E → T → F → num</code> 展開。左側 <code>E</code> 被解析為常數 <code>3</code>，右側 <code>T</code> 展開為常數 <code>5</code>，最後一個 <code>F</code> 展開為 <code>2</code>。所有 Token 均已由掃描器順利匹配，語法樹建構完畢。",
+                        lookaheadIdx: 4,
+                        lookaheadText: "2",
+                        triggeredRule: "E → T → F → num",
+                        judgment: "Parser 掃描剩餘數值並將非終端符號（E、T、F）對應至實際終端。所有葉節點由左至右為 3 + 5 * 2，滿足文法匹配條件。",
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 40, type: "nonterminal" },
+                            { id: "e2", label: "3", x: 140, y: 120, type: "terminal", active: true },
+                            { id: "op1", label: "+", x: 250, y: 120, type: "terminal" },
+                            { id: "t1", label: "T", x: 360, y: 120, type: "nonterminal" },
+                            
+                            { id: "t2", label: "5", x: 300, y: 200, type: "terminal", active: true },
+                            { id: "op2", label: "*", x: 360, y: 200, type: "terminal" },
+                            { id: "f1", label: "2", x: 420, y: 200, type: "terminal", active: true }
+                        ],
+                        edges: [
+                            { from: "e1", to: "e2" },
+                            { from: "e1", to: "op1" },
+                            { from: "e1", to: "t1" },
+                            { from: "t1", to: "t2" },
+                            { from: "t1", to: "op2" },
+                            { from: "t1", to: "f1" }
+                        ],
+                        evalProcess: "3 + (5 * 2)",
+                        evalResult: "-"
+                    },
+                    {
+                        desc: "<b>步驟 5 - 由下至上計算（求值）：</b>在後序走訪求值階段，由於乘法運算子 <code>*</code> 處在結構的最深層，必須優先計算。<code>5 * 2</code> 首先計算得出結果 <code>10</code>，隨後再傳回上層。上層的 <code>+</code> 運算子接收到結果，將 <code>3</code> 與 <code>10</code> 相加，最終得到正確解答 <code>13</code>。",
+                        lookaheadIdx: 5,
+                        lookaheadText: "EOF",
+                        triggeredRule: "語意分析求值",
+                        judgment: "掃描器抵達 EOF。語意求值從樹的最深層開始。最底層乘法 5 * 2 = 10 優先執行，接著才是最上層加法 3 + 10 = 13。",
+                        nodes: [
+                            { id: "e1", label: "E = 13", x: 250, y: 40, type: "nonterminal", highlight: true },
+                            { id: "e2", label: "3", x: 140, y: 120, type: "terminal" },
+                            { id: "op1", label: "+", x: 250, y: 120, type: "terminal" },
+                            { id: "t1", label: "T = 10", x: 360, y: 120, type: "nonterminal", highlight: true },
+                            
+                            { id: "t2", label: "5", x: 300, y: 200, type: "terminal" },
+                            { id: "op2", label: "*", x: 360, y: 200, type: "terminal" },
+                            { id: "f1", label: "2", x: 420, y: 200, type: "terminal" }
+                        ],
+                        edges: [
+                            { from: "e1", to: "e2", highlight: true },
+                            { from: "e1", to: "op1", highlight: true },
+                            { from: "e1", to: "t1", highlight: true },
+                            { from: "t1", to: "t2", highlight: true },
+                            { from: "t1", to: "op2", highlight: true },
+                            { from: "t1", to: "f1", highlight: true }
+                        ],
+                        evalProcess: "3 + (5 * 2)  →  3 + 10",
+                        evalResult: "13"
+                    }
+                ]
+            },
+            expr2: {
+                expression: "6 * 4 + 3",
+                tokens: ["6", "*", "4", "+", "3", "EOF"],
+                steps: [
+                    {
+                        desc: "<b>初始狀態：</b>語法分析器（Parser）啟動，準備自上而下解析算術運算式。讀入第一個預看符號（Lookahead）為 <code>6</code>。Parser 會將表示整個表達式的起始符號 <code>E</code> 置於樹的根部。",
+                        lookaheadIdx: 0,
+                        lookaheadText: "6",
+                        triggeredRule: "初始化 E (起始符號)",
+                        judgment: "讀入第一個 Token [6]。儘管最左側為高優先權的乘法，Parser 仍必須以代表最外層低優先權（加減法）的非終端符號 E 做為解析樹根節點起點。",
+                        nodes: [
+                            { id: "e1", label: "E (根)", x: 250, y: 40, type: "nonterminal", active: true }
+                        ],
+                        edges: [],
+                        evalProcess: "尚未求值",
+                        evalResult: "-"
+                    },
+                    {
+                        desc: "<b>步驟 2 - 展開加法運算：</b>Parser 在掃描時預看到加法運算子 <code>+</code>。因為加法優先權低於乘法，所以加法 <code>+</code> 必須先在最上層展開。Parser 選擇規則 <code>E → E + T</code>，這會將左側的乘法 <code>6 * 4</code> 封裝在左子樹 <code>E</code> 中，而將右側單一加數 <code>3</code> 置於 <code>T</code>。",
+                        lookaheadIdx: 3,
+                        lookaheadText: "+",
+                        triggeredRule: "E → E + T",
+                        judgment: "預看符號為 '+'。即使乘法出現在算式左側，根據分層文法規則，加法仍然要在最上層（根節點）先展開。這會將 6 * 4 劃分在左側子樹 E 之下，確保其優先權。",
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 40, type: "nonterminal" },
+                            { id: "e2", label: "E", x: 140, y: 120, type: "nonterminal", active: true },
+                            { id: "op1", label: "+", x: 250, y: 120, type: "terminal", active: true },
+                            { id: "t1", label: "T", x: 360, y: 120, type: "nonterminal", active: true }
+                        ],
+                        edges: [
+                            { from: "e1", to: "e2" },
+                            { from: "e1", to: "op1" },
+                            { from: "e1", to: "t1" }
+                        ],
+                        evalProcess: "E(左) + T(right)",
+                        evalResult: "-"
+                    },
+                    {
+                        desc: "<b>步驟 3 - 展開左側乘法運算：</b>此時，左下角的非終端符號 <code>E</code> 需要匹配乘法 <code>6 * 4</code>。因為 E 包含乘法，Parser 先將 <code>E</code> 退化推導為 <code>T</code>，隨後立即觸發規則 <code>T → T * F</code>。這使得乘法運算子 <code>*</code> 被推導至比 <code>+</code> 更深的 y 座標層級中。",
+                        lookaheadIdx: 1,
+                        lookaheadText: "*",
+                        triggeredRule: "E → T , T → T * F",
+                        judgment: "左側非終端符號 E 在匹配 6 * 4 時，經由 E → T 再觸發 T → T * F，使 '*' 運算子落於深度為 200 的深層節點，決定了其優先計算的語法結構。",
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 40, type: "nonterminal" },
+                            { id: "e2", label: "E", x: 140, y: 120, type: "nonterminal" },
+                            { id: "op1", label: "+", x: 250, y: 120, type: "terminal" },
+                            { id: "t1", label: "T", x: 360, y: 120, type: "nonterminal" },
+                            
+                            { id: "t2", label: "T", x: 80, y: 200, type: "nonterminal", active: true },
+                            { id: "op2", label: "*", x: 140, y: 200, type: "terminal", active: true },
+                            { id: "f1", label: "F", x: 200, y: 200, type: "nonterminal", active: true }
+                        ],
+                        edges: [
+                            { from: "e1", to: "e2" },
+                            { from: "e1", to: "op1" },
+                            { from: "e1", to: "t1" },
+                            { from: "e2", to: "t2" },
+                            { from: "e2", to: "op2" },
+                            { from: "e2", to: "f1" }
+                        ],
+                        evalProcess: "(T(左) * F(左中)) + T(右)",
+                        evalResult: "-"
+                    },
+                    {
+                        desc: "<b>步驟 4 - 展開並匹配數值：</b>Parser 依序將其餘的非終端符號透過 <code>T → F → num</code> 展開。左側的 <code>T</code> 展開為常數 <code>6</code>，中間的 <code>F</code> 展開為 <code>4</code>，而右側處理加數的 <code>T</code> 則直接解析為常數 <code>3</code>。語法分析樹建構完畢。",
+                        lookaheadIdx: 4,
+                        lookaheadText: "3",
+                        triggeredRule: "T → F → num",
+                        judgment: "Parser 讀取剩餘常數並匹配至終端節點。所有葉節點由左至右為 6 * 4 + 3，滿足文法匹配條件，語法解析樹建置完成。",
+                        nodes: [
+                            { id: "e1", label: "E", x: 250, y: 40, type: "nonterminal" },
+                            { id: "e2", label: "E", x: 140, y: 120, type: "nonterminal" },
+                            { id: "op1", label: "+", x: 250, y: 120, type: "terminal" },
+                            { id: "t1", label: "3", x: 360, y: 120, type: "terminal", active: true },
+                            
+                            { id: "t2", label: "6", x: 80, y: 200, type: "terminal", active: true },
+                            { id: "op2", label: "*", x: 140, y: 200, type: "terminal" },
+                            { id: "f1", label: "4", x: 200, y: 200, type: "terminal", active: true }
+                        ],
+                        edges: [
+                            { from: "e1", to: "e2" },
+                            { from: "e1", to: "op1" },
+                            { from: "e1", to: "t1" },
+                            { from: "e2", to: "t2" },
+                            { from: "e2", to: "op2" },
+                            { from: "e2", to: "f1" }
+                        ],
+                        evalProcess: "(6 * 4) + 3",
+                        evalResult: "-"
+                    },
+                    {
+                        desc: "<b>步驟 5 - 由下至上計算（求值）：</b>後序走訪求值啟動。因為乘法運算 <code>*</code> 在語法樹中深度最深（y 座標 200），故會優先計算。<code>6 * 4</code> 計算得出結果 <code>24</code>。接著傳回上一層的 <code>+</code> 節點，與右側的 <code>3</code> 進行加法運算，最終得到解答 <code>27</code>。這證明無論乘法在左還是在右，其優先權均不變。",
+                        lookaheadIdx: 5,
+                        lookaheadText: "EOF",
+                        triggeredRule: "語意分析求值",
+                        judgment: "掃描器抵達 EOF。求值從樹的最深處開始。最深處乘法 6 * 4 = 24 優先執行，接著才是最上層加法 24 + 3 = 27。驗證了無二義性文法對優先權控制的正確性。",
+                        nodes: [
+                            { id: "e1", label: "E = 27", x: 250, y: 40, type: "nonterminal", highlight: true },
+                            { id: "e2", label: "E = 24", x: 140, y: 120, type: "nonterminal", highlight: true },
+                            { id: "op1", label: "+", x: 250, y: 120, type: "terminal" },
+                            { id: "t1", label: "3", x: 360, y: 120, type: "terminal" },
+                            
+                            { id: "t2", label: "6", x: 80, y: 200, type: "terminal" },
+                            { id: "op2", label: "*", x: 140, y: 200, type: "terminal" },
+                            { id: "f1", label: "4", x: 200, y: 200, type: "terminal" }
+                        ],
+                        edges: [
+                            { from: "e1", to: "e2", highlight: true },
+                            { from: "e1", to: "op1", highlight: true },
+                            { from: "e1", to: "t1", highlight: true },
+                            { from: "e2", to: "t2", highlight: true },
+                            { from: "e2", to: "op2", highlight: true },
+                            { from: "e2", to: "f1", highlight: true }
+                        ],
+                        evalProcess: "(6 * 4) + 3  →  24 + 3",
+                        evalResult: "27"
+                    }
+                ]
+            }
+        };
+
+        let currentExprKey = 'expr1';
+        let currentStepIndex = 0;
+
+        // 初始化演示
+        function initDemo() {
+            currentStepIndex = 0;
+            renderStep();
+        }
+
+        // 切換算式
+        function selectExpression(exprKey) {
+            if (currentExprKey === exprKey) return;
+            currentExprKey = exprKey;
+            
+            // 更新按鈕外觀
+            const btn1 = document.getElementById('btn-expr-1');
+            const btn2 = document.getElementById('btn-expr-2');
+            
+            if (exprKey === 'expr1') {
+                btn1.className = "flex flex-col items-center justify-center p-3 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-blue-600 bg-blue-50 text-blue-700";
+                btn2.className = "flex flex-col items-center justify-center p-3 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-slate-200 text-slate-600 hover:bg-slate-50";
+            } else {
+                btn2.className = "flex flex-col items-center justify-center p-3 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-blue-600 bg-blue-50 text-blue-700";
+                btn1.className = "flex flex-col items-center justify-center p-3 rounded-lg border-2 text-sm font-medium transition-all duration-200 border-slate-200 text-slate-600 hover:bg-slate-50";
+            }
+
+            initDemo();
+        }
+
+        // 渲染步驟
+        function renderStep() {
+            const data = exprData[currentExprKey];
+            const step = data.steps[currentStepIndex];
+            const totalSteps = data.steps.length;
+
+            // 更新文字與說明
+            document.getElementById('step-badge').textContent = `步驟 ${currentStepIndex + 1} / ${totalSteps}`;
+            document.getElementById('step-desc').innerHTML = step.desc;
+            document.getElementById('current-expr-display').textContent = data.expression;
+            document.getElementById('eval-process').textContent = step.evalProcess;
+            document.getElementById('eval-result').textContent = step.evalResult;
+
+            // 更新語法分析決策資訊
+            document.getElementById('decision-lookahead').textContent = step.lookaheadText;
+            document.getElementById('decision-rule').textContent = step.triggeredRule;
+            document.getElementById('decision-judgment').textContent = step.judgment;
+
+            // 控制按鈕狀態
+            const prevBtn = document.getElementById('btn-prev');
+            const nextBtn = document.getElementById('btn-next');
+
+            if (currentStepIndex === 0) {
+                prevBtn.disabled = true;
+                prevBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200";
+            } else {
+                prevBtn.disabled = false;
+                prevBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200";
+            }
+
+            if (currentStepIndex === totalSteps - 1) {
+                nextBtn.disabled = true;
+                nextBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-slate-200 text-slate-400 text-sm font-medium cursor-not-allowed transition-all duration-200";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm";
+            }
+
+            // 渲染 Token 軌道
+            renderTokenStream(data.tokens, step.lookaheadIdx);
+
+            // 渲染 SVG 畫布
+            renderCanvas(step);
+        }
+
+        // 渲染 Token 軌道
+        function renderTokenStream(tokens, activeIdx) {
+            const container = document.getElementById('token-stream-container');
+            container.innerHTML = '';
+
+            tokens.forEach((token, idx) => {
+                const badge = document.createElement('div');
+                badge.className = "token-slide flex flex-col items-center";
+
+                const isLookahead = idx === activeIdx;
+
+                // 建立 Token 的顯示區塊
+                const tokenBox = document.createElement('span');
+                if (isLookahead) {
+                    tokenBox.className = "px-3 py-1.5 rounded bg-blue-600 text-white font-bold text-xs shadow-sm ring-2 ring-blue-300 ring-offset-1";
+                } else if (idx < activeIdx) {
+                    tokenBox.className = "px-3 py-1.5 rounded bg-slate-200 text-slate-400 text-xs line-through";
+                } else {
+                    tokenBox.className = "px-3 py-1.5 rounded bg-white text-slate-700 text-xs border border-slate-200";
+                }
+                tokenBox.textContent = token;
+                badge.appendChild(tokenBox);
+
+                // 指向目前預看 Token 的平面指標
+                if (isLookahead) {
+                    const arrow = document.createElement('div');
+                    arrow.className = "w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[6px] border-b-blue-600 mt-1";
+                    badge.appendChild(arrow);
+                } else {
+                    const placeholder = document.createElement('div');
+                    placeholder.className = "w-2 h-[7px] mt-1";
+                    badge.appendChild(placeholder);
+                }
+
+                container.appendChild(badge);
+            });
+
+            // 更新右側狀態
+            const statusLabel = document.getElementById('scan-status');
+            if (activeIdx >= tokens.length - 1) {
+                statusLabel.textContent = "狀態: 掃描完畢 (EOF)";
+                statusLabel.className = "text-emerald-600 font-mono";
+            } else {
+                statusLabel.textContent = `狀態: 掃描中 (預看 '${tokens[activeIdx]}')`;
+                statusLabel.className = "text-blue-600 font-mono";
+            }
+        }
+
+        // 繪製語法樹 SVG
+        function renderCanvas(step) {
+            const svg = document.getElementById('tree-svg');
+            svg.innerHTML = ''; // 清空畫布
+
+            // 1. 繪製連線
+            step.edges.forEach(edge => {
+                const fromNode = step.nodes.find(n => n.id === edge.from);
+                const toNode = step.nodes.find(n => n.id === edge.to);
+                
+                if (fromNode && toNode) {
+                    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    line.setAttribute("x1", fromNode.x);
+                    line.setAttribute("y1", fromNode.y);
+                    line.setAttribute("x2", toNode.x);
+                    line.setAttribute("y2", toNode.y);
+                    
+                    if (edge.highlight) {
+                        line.setAttribute("class", "highlight-edge");
+                    } else {
+                        line.setAttribute("stroke", "#cbd5e1");
+                        line.setAttribute("stroke-width", "2");
+                    }
+                    svg.appendChild(line);
+                }
+            });
+
+            // 2. 繪製節點
+            step.nodes.forEach(node => {
+                const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                group.setAttribute("class", "tree-node");
+
+                let rectColor = "#ffffff";
+                let strokeColor = "#64748b";
+                let strokeWidth = "1.5";
+                let textColor = "#0f172a";
+                let fontWeight = "normal";
+
+                if (node.type === "terminal") {
+                    // 終端節點（葉子節點，實體色背景）
+                    rectColor = "#f1f5f9";
+                    strokeColor = "#94a3b8";
+                    fontWeight = "bold";
+                    if (node.active) {
+                        rectColor = "#dbeafe";
+                        strokeColor = "#3b82f6";
+                        textColor = "#1d4ed8";
+                    }
+                } else {
+                    // 非終端節點（內部語法規則變數）
+                    rectColor = "#ffffff";
+                    strokeColor = "#64748b";
+                    if (node.active) {
+                        strokeColor = "#3b82f6";
+                        strokeWidth = "2.5";
+                        textColor = "#2563eb";
+                        fontWeight = "bold";
+                    }
+                    if (node.highlight) {
+                        rectColor = "#eff6ff";
+                        strokeColor = "#2563eb";
+                        strokeWidth = "2.5";
+                        textColor = "#1e40af";
+                        fontWeight = "bold";
+                    }
+                }
+
+                const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                const rectWidth = 72;
+                const rectHeight = 36;
+                rect.setAttribute("x", node.x - rectWidth / 2);
+                rect.setAttribute("y", node.y - rectHeight / 2);
+                rect.setAttribute("width", rectWidth);
+                rect.setAttribute("height", rectHeight);
+                rect.setAttribute("rx", "6");
+                rect.setAttribute("fill", rectColor);
+                rect.setAttribute("stroke", strokeColor);
+                rect.setAttribute("stroke-width", strokeWidth);
+                group.appendChild(rect);
+
+                const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                text.setAttribute("x", node.x);
+                text.setAttribute("y", node.y + 4);
+                text.setAttribute("text-anchor", "middle");
+                text.setAttribute("fill", textColor);
+                text.setAttribute("font-size", "13px");
+                text.setAttribute("font-family", "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace");
+                text.setAttribute("font-weight", fontWeight);
+                text.textContent = node.label;
+                group.appendChild(text);
+
+                svg.appendChild(group);
+            });
+        }
+
+        // 步進控制
+        function nextStep() {
+            const data = exprData[currentExprKey];
+            if (currentStepIndex < data.steps.length - 1) {
+                currentStepIndex++;
+                renderStep();
+            }
+        }
+
+        function prevStep() {
+            if (currentStepIndex > 0) {
+                currentStepIndex--;
+                renderStep();
+            }
+        }
+
+        function resetDemo() {
+            initDemo();
+        }
+
+        // 頁面載入完成後啟動
+        window.onload = function() {
+            initDemo();
+        };
+    </script>
+</body>
+</html>
