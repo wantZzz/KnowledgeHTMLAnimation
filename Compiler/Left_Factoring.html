@@ -1,0 +1,567 @@
+---
+layout: null
+title: "[Chapter 3.2] 左因式分解"
+description: "利用左因式分解解決公共前綴即複數規則頭部皆有一樣的規則式"
+role: "primary"
+related: []
+tags: ["移動端友善"]
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>左因式分解（Left Factoring）逐步建構與決策演示</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .transition-all-custom {
+            transition: all 0.4s ease-in-out;
+        }
+        .code-highlight {
+            background-color: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        .matched-highlight {
+            background-color: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col justify-between">
+
+    <!-- 頁首 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6 shadow-sm">
+        <div class="max-w-6xl mx-auto flex items-center justify-between">
+            <h1 class="text-xl font-bold tracking-tight text-slate-900">編譯器設計：左因式分解與預測分析決策（Left Factoring & Decision Making）</h1>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-mono">Chapter 4.3 Writing a Grammar</span>
+        </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="max-w-6xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
+        
+        <!-- 左側控制面板與說明 -->
+        <section class="lg:col-span-5 flex flex-col gap-4">
+            
+            <!-- 演示目標與公式定義 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-2">左因式分解數學定義</h2>
+                <div class="space-y-2 text-xs text-slate-600 bg-slate-50 p-4 rounded-lg border border-slate-100 font-mono">
+                    <div class="font-bold text-slate-700">當文法含有公共前綴時：</div>
+                    <div class="text-red-600">A &rarr; &alpha;&beta;&#8321; | &alpha;&beta;&#8322;</div>
+                    <div class="mt-2 font-bold text-slate-700">提取公共前綴 &alpha; 進行因式分解：</div>
+                    <div class="text-emerald-600">
+                        A &rarr; &alpha; A'<br>
+                        A' &rarr; &beta;&#8321; | &beta;&#8322;
+                    </div>
+                </div>
+            </div>
+
+            <!-- 核心逐步說明面板 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between min-h-[300px]">
+                <div>
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-bold text-slate-900 text-base">轉換與匹配狀態</h3>
+                        <span id="step-badge" class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-mono">步驟 1 / 6</span>
+                    </div>
+
+                    <!-- 當前輸入串流 -->
+                    <div class="mb-4">
+                        <div class="text-xs text-slate-400 mb-1">待分析輸入字串：</div>
+                        <div id="stream-pointer" class="flex gap-1 font-mono text-xs p-2 bg-slate-900 text-white rounded-lg justify-center tracking-wider">
+                            <!-- JS 動態更新 -->
+                        </div>
+                    </div>
+                    
+                    <div class="prose prose-sm text-slate-600 leading-relaxed min-h-[120px]" id="step-desc">
+                        載入中...
+                    </div>
+                </div>
+
+                <!-- 多步互動元素：限制於此二個按鈕 -->
+                <div class="border-t border-slate-100 pt-4 mt-6 flex items-center justify-between gap-3">
+                    <button id="btn-prev" onclick="prevStep()" class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200" disabled>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                        上一步 (Prev)
+                    </button>
+                    <button id="btn-next" onclick="nextStep()" class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm">
+                        下一步 (Next)
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 分析器決策表模擬 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div class="flex items-center gap-2 mb-3">
+                    <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+                    <h3 class="font-bold text-slate-900 text-sm">LL(1) 預測分析決策表狀態</h3>
+                </div>
+                <div class="overflow-x-auto text-xs font-mono">
+                    <table class="w-full border-collapse border border-slate-200">
+                        <thead>
+                            <tr class="bg-slate-50 text-slate-600">
+                                <th class="border border-slate-200 p-2 text-left">非終端</th>
+                                <th class="border border-slate-200 p-2 text-left">遇到 Token: "if"</th>
+                                <th class="border border-slate-200 p-2 text-left">遇到 Token: "else"</th>
+                            </tr>
+                        </thead>
+                        <tbody id="decision-table-body">
+                            <!-- 決策表內容依步驟動態更新 -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- 右側視覺化推導樹與對比畫布 -->
+        <section class="lg:col-span-7 flex flex-col gap-4">
+            
+            <!-- 兩種文法直觀對照 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm grid grid-cols-2 gap-4">
+                <div id="cfg-old-container" class="border p-3 rounded-lg border-slate-200 transition-all-custom">
+                    <div class="text-xs font-bold text-slate-500 mb-1">原始未處理文法 (二義性/有公共前綴)</div>
+                    <div class="font-mono text-xs text-slate-700 leading-relaxed">
+                        S &rarr; <span class="bg-red-50 text-red-700 px-1 rounded font-bold">if E then S</span><br>
+                        S &rarr; <span class="bg-red-50 text-red-700 px-1 rounded font-bold">if E then S</span> else S
+                    </div>
+                </div>
+                <div id="cfg-new-container" class="border p-3 rounded-lg border-slate-200 transition-all-custom">
+                    <div class="text-xs font-bold text-slate-500 mb-1">因式分解後文法 (無公共前綴)</div>
+                    <div class="font-mono text-xs text-slate-700 leading-relaxed">
+                        S &rarr; <span class="text-emerald-700 font-bold">if E then S</span> S'<br>
+                        S' &rarr; else S | &epsilon;
+                    </div>
+                </div>
+            </div>
+
+            <!-- SVG 狀態與樹狀結構渲染 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between flex-grow">
+                <div class="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                        <span class="font-bold text-slate-900 text-sm">語法分析樹匹配與衝突可視化</span>
+                    </div>
+                    <button onclick="resetDemo()" class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H17"/></svg>
+                        重置演示
+                    </button>
+                </div>
+
+                <!-- SVG 畫布容器 -->
+                <div class="relative w-full bg-slate-50 rounded-lg border border-slate-100 flex items-center justify-center min-h-[360px]">
+                    <svg id="tree-svg" class="w-full h-[360px]" viewBox="0 0 540 360">
+                        <!-- 動態渲染分析樹與衝突標示 -->
+                    </svg>
+                </div>
+                
+                <div class="mt-3 text-[11px] text-slate-400 flex items-start gap-1 leading-normal">
+                    <svg class="w-3.5 h-3.5 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    <span>說明：左側展示因公共前綴引發的分析衝突（紅色邊框），右側展示左因式分解後，藉由引入新非終端符號延後決策（綠色邊框）之正確邏輯。</span>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- 頁尾 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500">
+        <div class="max-w-6xl mx-auto">
+             編譯器設計課程輔助軟體 - 左因式分解轉換演示
+        </div>
+    </footer>
+
+    <script>
+        // 定義逐步操作之狀態數據
+        const stepsData = [
+            {
+                desc: "<b>步驟 1 - 衝突場景引入：</b>我們正準備解析輸入串流 <code>if E then S else S</code>。在此步驟中，編譯器讀入第一個 Token <code>if</code>。此時在原始文法中，非終端符號 <code>S</code> 擁有兩條可行的產生式分支，且兩條分支的前綴完全相同。",
+                tokens: ["if", "E", "then", "S", "else", "S"],
+                pointer: 0,
+                activePanel: 'old',
+                tableState: [
+                    { nonterminal: "S", ifRule: "S &rarr; if E then S<br>S &rarr; if E then S else S (衝突)", elseRule: "-" }
+                ],
+                nodes: [
+                    { id: "root", label: "S", x: 270, y: 40, type: "nonterminal" },
+                    { id: "old_branch1", label: "if E then S", x: 160, y: 130, type: "terminal-group", error: true },
+                    { id: "old_branch2", label: "if E then S else S", x: 380, y: 130, type: "terminal-group", error: true }
+                ],
+                edges: [
+                    { from: "root", to: "old_branch1", error: true },
+                    { from: "root", to: "old_branch2", error: true }
+                ]
+            },
+            {
+                desc: "<b>步驟 2 - 識別公共前綴 (&alpha;)：</b>分析器進行比對，確認兩個產生式前部皆包含相同的符號序列 <code>if E then S</code>。這意味著在讀完這個公共前綴（即 &alpha;）之前，預測分析器（Lookahead=1）在數學上**完全無法**做出決定，此現象會導致回溯（Backtracking）並嚴重損耗效率。",
+                tokens: ["if", "E", "then", "S", "else", "S"],
+                pointer: 3,
+                activePanel: 'old',
+                tableState: [
+                    { nonterminal: "S", ifRule: "S &rarr; [if E then S] ... <br>公共前綴 &alpha; 衝突", elseRule: "-" }
+                ],
+                nodes: [
+                    { id: "root", label: "S", x: 270, y: 40, type: "nonterminal" },
+                    { id: "old_branch1", label: "α = if E then S", x: 160, y: 130, type: "terminal-group", active: true },
+                    { id: "old_branch2", label: "α = if E then S (後接 else S)", x: 380, y: 130, type: "terminal-group", active: true }
+                ],
+                edges: [
+                    { from: "root", to: "old_branch1" },
+                    { from: "root", to: "old_branch2" }
+                ]
+            },
+            {
+                desc: "<b>步驟 3 - 執行提取與因式分解：</b>我們套用左因式分解公式。將公共前綴 <code>if E then S</code> 提取為單一產生式的頭部，並在尾端引入一個全新的非終端符號 <code>S'</code>（即 S &rarr; if E then S S'）。此動作將分支決策延後到前綴讀完之後。",
+                tokens: ["if", "E", "then", "S", "else", "S"],
+                pointer: 3,
+                activePanel: 'new',
+                tableState: [
+                    { nonterminal: "S", ifRule: "S &rarr; if E then S S'", elseRule: "-" },
+                    { nonterminal: "S'", ifRule: "-", elseRule: "待定義" }
+                ],
+                nodes: [
+                    { id: "root_new", label: "S", x: 270, y: 40, type: "nonterminal", highlight: true },
+                    { id: "op_if", label: "if", x: 100, y: 140, type: "terminal", highlight: true },
+                    { id: "op_e", label: "E", x: 180, y: 140, type: "terminal", highlight: true },
+                    { id: "op_then", label: "then", x: 260, y: 140, type: "terminal", highlight: true },
+                    { id: "op_s", label: "S", x: 340, y: 140, type: "nonterminal", highlight: true },
+                    { id: "op_s_prime", label: "S'", x: 440, y: 140, type: "nonterminal", active: true }
+                ],
+                edges: [
+                    { from: "root_new", to: "op_if", highlight: true },
+                    { from: "root_new", to: "op_e", highlight: true },
+                    { from: "root_new", to: "op_then", highlight: true },
+                    { from: "root_new", to: "op_s", highlight: true },
+                    { from: "root_new", to: "op_s_prime", highlight: true }
+                ]
+            },
+            {
+                desc: "<b>步驟 4 - 定義剩餘後綴分支 (S')：</b>現在我們定義 <code>S'</code> 的產生式。原來第一個產生式在提取前綴後不剩任何符號，因此定義 <code>S' &rarr; &epsilon;</code>；第二個產生式在提取後剩下 <code>else S</code>，因此定義 <code>S' &rarr; else S</code>。此步驟成功消除了非確定性（Nondeterminism）。",
+                tokens: ["if", "E", "then", "S", "else", "S"],
+                pointer: 3,
+                activePanel: 'new',
+                tableState: [
+                    { nonterminal: "S", ifRule: "S &rarr; if E then S S'", elseRule: "-" },
+                    { nonterminal: "S'", ifRule: "S' &rarr; &epsilon;", elseRule: "S' &rarr; else S" }
+                ],
+                nodes: [
+                    { id: "root_new", label: "S", x: 270, y: 40, type: "nonterminal" },
+                    { id: "op_if", label: "if", x: 100, y: 120, type: "terminal" },
+                    { id: "op_e", label: "E", x: 180, y: 120, type: "terminal" },
+                    { id: "op_then", label: "then", x: 260, y: 120, type: "terminal" },
+                    { id: "op_s", label: "S", x: 340, y: 120, type: "nonterminal" },
+                    { id: "op_s_prime", label: "S'", x: 440, y: 120, type: "nonterminal" },
+                    
+                    { id: "s_prime_choice1", label: "else S", x: 390, y: 220, type: "terminal-group", highlight: true },
+                    { id: "s_prime_choice2", label: "ε (空字串)", x: 490, y: 220, type: "terminal", highlight: true }
+                ],
+                edges: [
+                    { from: "root_new", to: "op_if" }, { from: "root_new", to: "op_e" }, { from: "root_new", to: "op_then" }, { from: "root_new", to: "op_s" }, { from: "root_new", to: "op_s_prime" },
+                    { from: "op_s_prime", to: "s_prime_choice1", highlight: true },
+                    { from: "op_s_prime", to: "s_prime_choice2", highlight: true }
+                ]
+            },
+            {
+                desc: "<b>步驟 5 - 預測分析比對：</b>現在，當分析器讀取到 <code>else</code> 時，它不再需要為 <code>S</code> 做選擇。<code>S</code> 已經在第一步毫不猶豫地展開。直到讀入 <code>else</code>（Lookahead = else），分析器才需要查表將 <code>S'</code> 展開為 <code>else S</code>。整個決策流程清晰、無衝突、無回溯。",
+                tokens: ["if", "E", "then", "S", "else", "S"],
+                pointer: 4,
+                activePanel: 'new',
+                tableState: [
+                    { nonterminal: "S", ifRule: "S &rarr; if E then S S'", elseRule: "-" },
+                    { nonterminal: "S'", ifRule: "S' &rarr; &epsilon;", elseRule: "S' &rarr; else S (選中)" }
+                ],
+                nodes: [
+                    { id: "root_new", label: "S", x: 270, y: 40, type: "nonterminal" },
+                    { id: "op_if", label: "if", x: 100, y: 120, type: "terminal" },
+                    { id: "op_e", label: "E", x: 180, y: 120, type: "terminal" },
+                    { id: "op_then", label: "then", x: 260, y: 120, type: "terminal" },
+                    { id: "op_s", label: "S", x: 340, y: 120, type: "nonterminal" },
+                    { id: "op_s_prime", label: "S'", x: 440, y: 120, type: "nonterminal" },
+                    
+                    { id: "op_else", label: "else", x: 410, y: 220, type: "terminal", highlight: true },
+                    { id: "op_s2", label: "S", x: 480, y: 220, type: "nonterminal", active: true }
+                ],
+                edges: [
+                    { from: "root_new", to: "op_if" }, { from: "root_new", to: "op_e" }, { from: "root_new", to: "op_then" }, { from: "root_new", to: "op_s" }, { from: "root_new", to: "op_s_prime" },
+                    { from: "op_s_prime", to: "op_else", highlight: true },
+                    { from: "op_s_prime", to: "op_s2", highlight: true }
+                ]
+            },
+            {
+                desc: "<b>步驟 6 - 轉換效益總結：</b>左因式分解將原本「當場需要做多條分支抉擇」的困局，改造為「先走唯一確定通道（前綴 &alpha;），後續依狀況處理分叉」的結構。這使得 LL(1) 預測分析表中的每個儲存格只有唯一一條明確指令，編譯器效能得以最佳化。",
+                tokens: ["if", "E", "then", "S", "else", "S"],
+                pointer: 5,
+                activePanel: 'new',
+                tableState: [
+                    { nonterminal: "S", ifRule: "S &rarr; if E then S S'", elseRule: "-" },
+                    { nonterminal: "S'", ifRule: "S' &rarr; &epsilon;", elseRule: "S' &rarr; else S" }
+                ],
+                nodes: [
+                    { id: "root_new", label: "S", x: 270, y: 40, type: "nonterminal", highlight: true },
+                    { id: "op_if", label: "if", x: 100, y: 120, type: "terminal", highlight: true },
+                    { id: "op_e", label: "E", x: 180, y: 120, type: "terminal", highlight: true },
+                    { id: "op_then", label: "then", x: 260, y: 120, type: "terminal", highlight: true },
+                    { id: "op_s", label: "S", x: 340, y: 120, type: "nonterminal", highlight: true },
+                    { id: "op_s_prime", label: "S'", x: 440, y: 120, type: "nonterminal", highlight: true },
+                    { id: "op_else", label: "else", x: 410, y: 220, type: "terminal", highlight: true },
+                    { id: "op_s2", label: "S", x: 480, y: 220, type: "nonterminal", highlight: true }
+                ],
+                edges: [
+                    { from: "root_new", to: "op_if", highlight: true }, { from: "root_new", to: "op_e", highlight: true }, { from: "root_new", to: "op_then", highlight: true }, { from: "root_new", to: "op_s", highlight: true }, { from: "root_new", to: "op_s_prime", highlight: true },
+                    { from: "op_s_prime", to: "op_else", highlight: true },
+                    { from: "op_s_prime", to: "op_s2", highlight: true }
+                ]
+            }
+        ];
+
+        let currentIndex = 0;
+
+        // 初始化演示狀態
+        function initDemo() {
+            currentIndex = 0;
+            renderStep();
+        }
+
+        // 渲染單一特定步驟的圖形與文字
+        function renderStep() {
+            const step = stepsData[currentIndex];
+            const total = stepsData.length;
+
+            // 1. 更新進度標籤與描述
+            document.getElementById('step-badge').textContent = `步驟 ${currentIndex + 1} / ${total}`;
+            document.getElementById('step-desc').innerHTML = step.desc;
+
+            // 2. 渲染串流進度
+            const streamContainer = document.getElementById('stream-pointer');
+            streamContainer.innerHTML = '';
+            step.tokens.forEach((tk, idx) => {
+                const span = document.createElement('span');
+                span.textContent = tk;
+                if (idx === step.pointer) {
+                    span.className = "px-1.5 py-0.5 bg-blue-600 text-white font-bold rounded border border-blue-400 shadow-sm";
+                } else if (idx < step.pointer) {
+                    span.className = "px-1.5 py-0.5 text-slate-500 line-through";
+                } else {
+                    span.className = "px-1.5 py-0.5 text-slate-300";
+                }
+                streamContainer.appendChild(span);
+            });
+
+            // 3. 切換文法對照面板的高亮邊框
+            const oldContainer = document.getElementById('cfg-old-container');
+            const newContainer = document.getElementById('cfg-new-container');
+            if (step.activePanel === 'old') {
+                oldContainer.className = "border-2 p-3 rounded-lg border-red-500 bg-red-50/10 transition-all-custom";
+                newContainer.className = "border p-3 rounded-lg border-slate-200 opacity-40 transition-all-custom";
+            } else {
+                oldContainer.className = "border p-3 rounded-lg border-slate-200 opacity-40 transition-all-custom";
+                newContainer.className = "border-2 p-3 rounded-lg border-emerald-500 bg-emerald-50/10 transition-all-custom";
+            }
+
+            // 4. 動態生成決策表狀態
+            const tableBody = document.getElementById('decision-table-body');
+            tableBody.innerHTML = '';
+            step.tableState.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-50";
+                
+                const tdNonterminal = document.createElement('td');
+                tdNonterminal.className = "border border-slate-200 p-2 font-bold text-slate-700";
+                tdNonterminal.innerHTML = row.nonterminal;
+                tr.appendChild(tdNonterminal);
+
+                const tdIf = document.createElement('td');
+                tdIf.className = "border border-slate-200 p-2 text-slate-600";
+                tdIf.innerHTML = row.ifRule;
+                if (row.ifRule.includes("衝突")) {
+                    tdIf.className += " bg-red-50 text-red-700 font-medium";
+                } else if (row.ifRule.includes("S &rarr; if E then S S'")) {
+                    tdIf.className += " bg-emerald-50 text-emerald-700 font-medium";
+                }
+                tr.appendChild(tdIf);
+
+                const tdElse = document.createElement('td');
+                tdElse.className = "border border-slate-200 p-2 text-slate-600";
+                tdElse.innerHTML = row.elseRule;
+                if (row.elseRule.includes("選中")) {
+                    tdElse.className += " bg-blue-50 text-blue-700 font-medium";
+                }
+                tr.appendChild(tdElse);
+
+                tableBody.appendChild(tr);
+            });
+
+            // 5. 控制按鈕狀態
+            const prevBtn = document.getElementById('btn-prev');
+            const nextBtn = document.getElementById('btn-next');
+
+            if (currentIndex === 0) {
+                prevBtn.disabled = true;
+                prevBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all-custom" ;
+            } else {
+                prevBtn.disabled = false;
+                prevBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all-custom";
+            }
+
+            if (currentIndex === total - 1) {
+                nextBtn.disabled = true;
+                nextBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-slate-200 text-slate-400 text-sm font-medium cursor-not-allowed transition-all-custom";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all-custom shadow-sm";
+            }
+
+            // 6. SVG 圖形渲染
+            renderSvgTree(step);
+        }
+
+        // SVG 渲染函數
+        function renderSvgTree(step) {
+            const svg = document.getElementById('tree-svg');
+            svg.innerHTML = ''; // 清空畫布
+
+            // 1. 繪製分支線段
+            step.edges.forEach(edge => {
+                const fromNode = step.nodes.find(n => n.id === edge.from);
+                const toNode = step.nodes.find(n => n.id === edge.to);
+
+                if (fromNode && toNode) {
+                    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    line.setAttribute("x1", fromNode.x);
+                    line.setAttribute("y1", fromNode.y);
+                    line.setAttribute("x2", toNode.x);
+                    line.setAttribute("y2", toNode.y);
+
+                    if (edge.error) {
+                        line.setAttribute("stroke", "#ef4444");
+                        line.setAttribute("stroke-width", "2");
+                        line.setAttribute("stroke-dasharray", "4,4");
+                    } else if (edge.highlight) {
+                        line.setAttribute("stroke", "#10b981");
+                        line.setAttribute("stroke-width", "2.5");
+                    } else {
+                        line.setAttribute("stroke", "#cbd5e1");
+                        line.setAttribute("stroke-width", "1.5");
+                    }
+                    svg.appendChild(line);
+                }
+            });
+
+            // 2. 繪製節點
+            step.nodes.forEach(node => {
+                const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                group.setAttribute("class", "tree-node");
+
+                let fill = "#ffffff";
+                let stroke = "#64748b";
+                let strokeWidth = "1.5";
+                let textColor = "#0f172a";
+                let weight = "normal";
+                let rectWidth = 100;
+                let rectHeight = 32;
+
+                if (node.type === "terminal-group") {
+                    // 端點群組（複合前綴展示）
+                    rectWidth = 140;
+                    fill = "#f8fafc";
+                    stroke = "#94a3b8";
+                    if (node.error) {
+                        fill = "#fef2f2";
+                        stroke = "#ef4444";
+                        textColor = "#b91c1c";
+                        weight = "bold";
+                        strokeWidth = "2";
+                    }
+                    if (node.active) {
+                        fill = "#eff6ff";
+                        stroke = "#3b82f6";
+                        textColor = "#1d4ed8";
+                        weight = "bold";
+                        strokeWidth = "2";
+                    }
+                } else if (node.type === "terminal") {
+                    rectWidth = 54;
+                    fill = "#f1f5f9";
+                    stroke = "#475569";
+                    weight = "bold";
+                    if (node.highlight) {
+                        fill = "#ecfdf5";
+                        stroke = "#10b981";
+                        textColor = "#047857";
+                    }
+                } else {
+                    // 非終端符號節點
+                    rectWidth = 64;
+                    stroke = "#2563eb";
+                    if (node.active) {
+                        strokeWidth = "2.5";
+                        textColor = "#1d4ed8";
+                        weight = "bold";
+                    }
+                    if (node.highlight) {
+                        fill = "#ecfdf5";
+                        stroke = "#10b981";
+                        textColor = "#047857";
+                        strokeWidth = "2.5";
+                        weight = "bold";
+                    }
+                }
+
+                // 繪製圓角矩形
+                const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                rect.setAttribute("x", node.x - rectWidth / 2);
+                rect.setAttribute("y", node.y - rectHeight / 2);
+                rect.setAttribute("width", rectWidth);
+                rect.setAttribute("height", rectHeight);
+                rect.setAttribute("rx", "6");
+                rect.setAttribute("fill", fill);
+                rect.setAttribute("stroke", stroke);
+                rect.setAttribute("stroke-width", strokeWidth);
+                group.appendChild(rect);
+
+                // 寫入文本
+                const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                text.setAttribute("x", node.x);
+                text.setAttribute("y", node.y + 4);
+                text.setAttribute("text-anchor", "middle");
+                text.setAttribute("fill", textColor);
+                text.setAttribute("font-size", "11px");
+                text.setAttribute("font-family", "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace");
+                text.setAttribute("font-weight", weight);
+                text.textContent = node.label;
+                group.appendChild(text);
+
+                svg.appendChild(group);
+            });
+        }
+
+        // 互動函數：下一步
+        function nextStep() {
+            if (currentIndex < stepsData.length - 1) {
+                currentIndex++;
+                renderStep();
+            }
+        }
+
+        // 互動函數：上一步
+        function prevStep() {
+            if (currentIndex > 0) {
+                currentIndex--;
+                renderStep();
+            }
+        }
+
+        // 互動函數：重置
+        function resetDemo() {
+            initDemo();
+        }
+
+        // 頁面載入完成後執行
+        window.onload = function() {
+            initDemo();
+        };
+    </script>
+</body>
+</html>

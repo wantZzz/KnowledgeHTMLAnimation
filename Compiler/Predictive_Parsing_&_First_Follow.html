@@ -1,0 +1,569 @@
+---
+layout: null
+title: "[Chapter 4.4] 預測分析法與回溯法優化"
+description: "比較回溯法與預測分析法建構的效率與過程"
+role: "primary"
+related: ["FOLLOW_Set_Design.html"]
+tags: ["移動端友善"]
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FIRST 與 FOLLOW 集合消除回溯逐步演示</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .transition-all-custom {
+            transition: all 0.4s ease-in-out;
+        }
+        .tree-node {
+            transition: transform 0.4s ease-in-out, opacity 0.4s ease-in-out;
+        }
+        .highlight-line {
+            stroke-dasharray: 4, 4;
+            animation: dash 1.5s linear infinite;
+        }
+        @keyframes dash {
+            to {
+                stroke-dashoffset: -20;
+            }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col justify-between">
+
+    <!-- 頁首 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6 shadow-sm">
+        <div class="max-w-6xl mx-auto flex items-center justify-between">
+            <h1 class="text-xl font-bold tracking-tight text-slate-900">編譯器設計：FIRST 與 FOLLOW 集合消除回溯（Backtracking Elimination）</h1>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-mono">Chapter 4.4 Top-Down Parsing</span>
+        </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="max-w-6xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
+        
+        <!-- 左側控制面板與說明 -->
+        <section class="lg:col-span-5 flex flex-col gap-4">
+            
+            <!-- 演示目標與集合定義 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-2">分析環境與集合計算</h2>
+                <div class="space-y-3">
+                    <div class="flex items-center justify-between py-1 border-b border-slate-100">
+                        <span class="text-xs text-slate-500">待分析輸入字串：</span>
+                        <span class="font-mono font-bold text-slate-800 tracking-wider">b</span>
+                    </div>
+                    
+                    <div class="font-mono text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100 space-y-1">
+                        <div class="font-bold text-slate-700 mb-1">文法規則 (CFG)：</div>
+                        <div>S → A B</div>
+                        <div>A → a | ε</div>
+                        <div>B → b | c</div>
+                    </div>
+
+                    <div class="font-mono text-xs text-slate-600 bg-emerald-50 p-3 rounded-lg border border-emerald-100 space-y-1">
+                        <div class="font-bold text-emerald-800 mb-1">預先計算之集合：</div>
+                        <div>FIRST(S) = { a, b, c }</div>
+                        <div>FIRST(A) = { a, ε }</div>
+                        <div>FIRST(B) = { b, c }</div>
+                        <div class="pt-1 border-t border-emerald-200/50 mt-1 font-bold text-blue-800">
+                            FOLLOW(A) = FIRST(B) = { b, c }
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 核心逐步說明面板 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between min-h-[280px]">
+                <div>
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-bold text-slate-900 text-base">剖析器對照執行狀態</h3>
+                        <span id="step-badge" class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-mono">步驟 1 / 5</span>
+                    </div>
+
+                    <!-- 當前輸入字串掃描指標 -->
+                    <div class="mb-4">
+                        <div class="text-xs text-slate-400 mb-1">輸入串流與當前 Lookahead 指標：</div>
+                        <div id="stream-pointer" class="flex gap-1 font-mono text-xs p-2 bg-slate-900 text-white rounded-lg justify-center tracking-wider">
+                            <!-- JS 動態更新 -->
+                        </div>
+                    </div>
+                    
+                    <div class="prose prose-sm text-slate-600 leading-relaxed min-h-[100px]" id="step-desc">
+                        載入中...
+                    </div>
+                </div>
+
+                <!-- 多步互動元素：僅限上一步與下一步兩個按鈕 -->
+                <div class="border-t border-slate-100 pt-4 mt-6 flex items-center justify-between gap-3">
+                    <button id="btn-prev" onclick="prevStep()" class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200" disabled>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                        上一步 (Prev)
+                    </button>
+                    <button id="btn-next" onclick="nextStep()" class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm">
+                        下一步 (Next)
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- 右側視覺化對照畫布 -->
+        <section class="lg:col-span-7 flex flex-col gap-4">
+            
+            <!-- 兩種剖析器狀態看板 -->
+            <div class="grid grid-cols-2 gap-4">
+                <div id="state-left" class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm text-center">
+                    <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">常規回溯法 (Backtracking)</span>
+                    <span id="label-left-status" class="text-xs font-mono font-bold text-amber-600 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-100 inline-block">準備執行</span>
+                </div>
+                <div id="state-right" class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm text-center">
+                    <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">預測分析法 (FIRST/FOLLOW)</span>
+                    <span id="label-right-status" class="text-xs font-mono font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100 inline-block">準備執行</span>
+                </div>
+            </div>
+
+            <!-- SVG 雙畫布渲染區 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between flex-grow">
+                <div class="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                        <span class="font-bold text-slate-900 text-sm">樹狀推導軌跡對照 ── 自然階層呈現</span>
+                    </div>
+                    <button onclick="resetDemo()" class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H17"/></svg>
+                        重置演示
+                    </button>
+                </div>
+
+                <!-- SVG 雙樹狀圖容器 -->
+                <div class="relative w-full bg-slate-50 rounded-lg border border-slate-100 flex items-center justify-center min-h-[340px]">
+                    <svg id="tree-svg" class="w-full h-[340px]" viewBox="0 0 540 340">
+                        <!-- 動態渲染雙樹結構 -->
+                    </svg>
+                </div>
+                
+                <div class="mt-3 text-[11px] text-slate-400 flex items-start gap-1 leading-normal">
+                    <svg class="w-3.5 h-3.5 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    <span>說明：左側回溯法因誤選分支導致錯配而回退；右側預測法利用 <code>FIRST(A)</code> 與 <code>FOLLOW(A)</code> 集合判斷 Lookahead <code>b</code> 屬於後跟集合，直接安全應用空字串（ε）推導。所有葉節點皆在各自對應的推導高度自然展開。</span>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- 頁尾 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500">
+        <div class="max-w-6xl mx-auto">
+             編譯器設計課程輔助學術軟體 - FIRST / FOLLOW 消除回溯機制
+        </div>
+    </footer>
+
+    <script>
+        // 定義步驟數據
+        const stepsData = [
+            {
+                desc: "<b>步驟 1 - 剖析初始化：</b>兩個剖析器皆準備解析輸入字元 <code>b</code>。初始狀態下，雙方均從開始符號 <code>S</code> 出發，展開為 <code>A B</code>。此時當前 Lookahead 符號為 <code>b</code>（藍色標示）。",
+                tokens: ["b", "$"],
+                pointer: 0,
+                statusLeft: "展開為 A B",
+                statusRight: "展開為 A B",
+                // 左側樹（回溯法）節點與連線
+                leftNodes: [
+                    { id: "sl", label: "S", x: 135, y: 40, type: "start" },
+                    { id: "al", label: "A", x: 80, y: 120, type: "nonterminal", active: true },
+                    { id: "bl", label: "B", x: 190, y: 120, type: "nonterminal" }
+                ],
+                leftEdges: [
+                    { from: "sl", to: "al" }, { from: "sl", to: "bl" }
+                ],
+                // 右側樹（預測法）節點與連線
+                rightNodes: [
+                    { id: "sr", label: "S", x: 405, y: 40, type: "start" },
+                    { id: "ar", label: "A", x: 350, y: 120, type: "nonterminal", active: true },
+                    { id: "br", label: "B", x: 460, y: 120, type: "nonterminal" }
+                ],
+                rightEdges: [
+                    { from: "sr", to: "ar" }, { from: "sr", to: "br" }
+                ]
+            },
+            {
+                desc: "<b>步驟 2 - 選擇分支決策：</b>剖析器需要展開非終端符號 <code>A</code>。<br><b>回溯法：</b>無任何集合輔助，盲目套用第一條產生式 <code>A → a</code>（橘色衝突線）。<br><b>預測法：</b>查詢 <code>FIRST(A) = {a, ε}</code>，發現當前 Lookahead <code>b</code> 不在其中；轉而查詢 <code>FOLLOW(A) = {b, c}</code>，確認 <code>b</code> 屬於後跟集合，直接、100% 確定地套用 <code>A → ε</code> 規則。",
+                tokens: ["b", "$"],
+                pointer: 0,
+                statusLeft: "盲目嘗試 A → a",
+                statusRight: "精確套用 A → ε",
+                leftNodes: [
+                    { id: "sl", label: "S", x: 135, y: 40, type: "start" },
+                    { id: "al", label: "A", x: 80, y: 120, type: "nonterminal" },
+                    { id: "bl", label: "B", x: 190, y: 120, type: "nonterminal" },
+                    { id: "al_a", label: "a", x: 80, y: 200, type: "terminal", error: true }
+                ],
+                leftEdges: [
+                    { from: "sl", to: "al" }, { from: "sl", to: "bl" },
+                    { from: "al", to: "al_a", error: true }
+                ],
+                rightNodes: [
+                    { id: "sr", label: "S", x: 405, y: 40, type: "start" },
+                    { id: "ar", label: "A", x: 350, y: 120, type: "nonterminal" },
+                    { id: "br", label: "B", x: 460, y: 120, type: "nonterminal" },
+                    { id: "ar_eps", label: "ε", x: 350, y: 200, type: "terminal", highlight: true }
+                ],
+                rightEdges: [
+                    { from: "sr", to: "ar" }, { from: "sr", to: "br" },
+                    { from: "ar", to: "ar_eps", highlight: true }
+                ]
+            },
+            {
+                desc: "<b>步驟 3 - 匹配驗證與衝突：</b>剖析器將展開的終端符號與輸入串流進行比對。<br><b>回溯法：</b>樹葉節點 <code>a</code> 與輸入字元 <code>b</code> 產生<b>錯配（Mismatch）</b>（紅色邊框標示），此時宣告失敗，準備執行回溯。<br><b>預測法：</b><code>A</code> 成功消解為空字串 <code>ε</code>。控制權順利轉移到 <code>B</code>，因當前 Lookahead 為 <code>b</code> 屬於 <code>FIRST(B) = {b, c}</code>，精確套用 <code>B → b</code>。",
+                tokens: ["b", "$"],
+                pointer: 0,
+                statusLeft: "錯配！準備回溯",
+                statusRight: "精確套用 B → b",
+                leftNodes: [
+                    { id: "sl", label: "S", x: 135, y: 40, type: "start" },
+                    { id: "al", label: "A", x: 80, y: 120, type: "nonterminal" },
+                    { id: "bl", label: "B", x: 190, y: 120, type: "nonterminal" },
+                    { id: "al_a", label: "a", x: 80, y: 200, type: "terminal", mismatch: true }
+                ],
+                leftEdges: [
+                    { from: "sl", to: "al" }, { from: "sl", to: "bl" },
+                    { from: "al", to: "al_a", error: true }
+                ],
+                rightNodes: [
+                    { id: "sr", label: "S", x: 405, y: 40, type: "start" },
+                    { id: "ar", label: "A", x: 350, y: 120, type: "nonterminal" },
+                    { id: "br", label: "B", x: 460, y: 120, type: "nonterminal" },
+                    { id: "ar_eps", label: "ε", x: 350, y: 200, type: "terminal" },
+                    { id: "br_b", label: "b", x: 460, y: 200, type: "terminal", highlight: true }
+                ],
+                rightEdges: [
+                    { from: "sr", to: "ar" }, { from: "sr", to: "br" },
+                    { from: "ar", to: "ar_eps" },
+                    { from: "br", to: "br_b", highlight: true }
+                ]
+            },
+            {
+                desc: "<b>步驟 4 - 回溯執行與預測推進：</b><br><b>回溯法：</b>被迫<b>倒退指標，撤銷分析樹</b>（原 <code>a</code> 分支被拆除，如虛線所示）。剖析器被迫回頭嘗試第二條規則 <code>A → ε</code>。<br><b>預測法：</b>葉節點 <code>b</code> 與輸入字串 <code>b</code> 完美配對，消耗當前輸入。剖析成功完成，總共僅花費極少的操作步驟，全程無任何無用功。",
+                tokens: ["b", "$"],
+                pointer: 1, // 預測法已消耗指標
+                statusLeft: "撤銷錯誤分支並回溯",
+                statusRight: "分析成功完成",
+                leftNodes: [
+                    { id: "sl", label: "S", x: 135, y: 40, type: "start" },
+                    { id: "al", label: "A", x: 80, y: 120, type: "nonterminal" },
+                    { id: "bl", label: "B", x: 190, y: 120, type: "nonterminal" },
+                    { id: "al_eps", label: "ε", x: 80, y: 200, type: "terminal", highlight: true }
+                ],
+                leftEdges: [
+                    { from: "sl", to: "al" }, { from: "sl", to: "bl" },
+                    { from: "al", to: "al_eps", highlight: true }
+                ],
+                rightNodes: [
+                    { id: "sr", label: "S", x: 405, y: 40, type: "start", highlight: true },
+                    { id: "ar", label: "A", x: 350, y: 120, type: "nonterminal", highlight: true },
+                    { id: "br", label: "B", x: 460, y: 120, type: "nonterminal", highlight: true },
+                    { id: "ar_eps", label: "ε", x: 350, y: 200, type: "terminal", highlight: true },
+                    { id: "br_b", label: "b", x: 460, y: 200, type: "terminal", highlight: true }
+                ],
+                rightEdges: [
+                    { from: "sr", to: "ar", highlight: true }, { from: "sr", to: "br", highlight: true },
+                    { from: "ar", to: "ar_eps", highlight: true },
+                    { from: "br", to: "br_b", highlight: true }
+                ]
+            },
+            {
+                desc: "<b>步驟 5 - 分析最終對照：</b><br><b>回溯法：</b>在嘗試了 <code>A → ε</code> 後，方能控制權交予 <code>B</code>，隨後套用 <code>B → b</code> 完成配對。雖然最終兩者皆完成剖析，但回溯法經歷了「試錯、失敗、倒退、重建」的代價；預測法藉由 <code>FIRST</code> 與 <code>FOLLOW</code> 集合直接選中正確通道，達成了線性時間內零回溯的高效表現。",
+                tokens: ["b", "$"],
+                pointer: 1,
+                statusLeft: "分析遲緩完成",
+                statusRight: "分析成功完成",
+                leftNodes: [
+                    { id: "sl", label: "S", x: 135, y: 40, type: "start", highlight: true },
+                    { id: "al", label: "A", x: 80, y: 120, type: "nonterminal", highlight: true },
+                    { id: "bl", label: "B", x: 190, y: 120, type: "nonterminal", highlight: true },
+                    { id: "al_eps", label: "ε", x: 80, y: 200, type: "terminal", highlight: true },
+                    { id: "bl_b", label: "b", x: 190, y: 200, type: "terminal", highlight: true }
+                ],
+                leftEdges: [
+                    { from: "sl", to: "al", highlight: true }, { from: "sl", to: "bl", highlight: true },
+                    { from: "al", to: "al_eps", highlight: true },
+                    { from: "bl", to: "bl_b", highlight: true }
+                ],
+                rightNodes: [
+                    { id: "sr", label: "S", x: 405, y: 40, type: "start", highlight: true },
+                    { id: "ar", label: "A", x: 350, y: 120, type: "nonterminal", highlight: true },
+                    { id: "br", label: "B", x: 460, y: 120, type: "nonterminal", highlight: true },
+                    { id: "ar_eps", label: "ε", x: 350, y: 200, type: "terminal", highlight: true },
+                    { id: "br_b", label: "b", x: 460, y: 200, type: "terminal", highlight: true }
+                ],
+                rightEdges: [
+                    { from: "sr", to: "ar", highlight: true }, { from: "sr", to: "br", highlight: true },
+                    { from: "ar", to: "ar_eps", highlight: true },
+                    { from: "br", to: "br_b", highlight: true }
+                ]
+            }
+        ];
+
+        let currentIndex = 0;
+
+        // 初始化演示狀態
+        function initDemo() {
+            currentIndex = 0;
+            renderStep();
+        }
+
+        // 渲染步驟函數
+        function renderStep() {
+            const step = stepsData[currentIndex];
+            const total = stepsData.length;
+
+            // 1. 更新控制文字與進度
+            document.getElementById('step-badge').textContent = `步驟 ${currentIndex + 1} / ${total}`;
+            document.getElementById('step-desc').innerHTML = step.desc;
+
+            // 2. 顯示兩個剖析器的獨立執行狀態
+            const statusLeft = document.getElementById('label-left-status');
+            const statusRight = document.getElementById('label-right-status');
+            
+            statusLeft.textContent = step.statusLeft;
+            statusRight.textContent = step.statusRight;
+
+            if (step.statusLeft.includes("錯配") || step.statusLeft.includes("撤銷")) {
+                statusLeft.className = "text-xs font-mono font-bold text-red-600 bg-red-50 px-2.5 py-1 rounded-full border border-red-100 inline-block";
+            } else if (step.statusLeft.includes("完成")) {
+                statusLeft.className = "text-xs font-mono font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100 inline-block";
+            } else {
+                statusLeft.className = "text-xs font-mono font-bold text-amber-600 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-100 inline-block";
+            }
+
+            if (step.statusRight.includes("完成")) {
+                statusRight.className = "text-xs font-mono font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100 inline-block";
+            } else {
+                statusRight.className = "text-xs font-mono font-bold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-100 inline-block";
+            }
+
+            // 3. 渲染串流指標
+            const streamContainer = document.getElementById('stream-pointer');
+            streamContainer.innerHTML = '';
+            step.tokens.forEach((tk, idx) => {
+                const span = document.createElement('span');
+                span.textContent = tk;
+                
+                // 這裡在回溯與預測法指標分開展示，以 step.pointer 標記當前預測法消耗狀態
+                if (idx === 0 && step.pointer === 0) {
+                    span.className = "px-1.5 py-0.5 bg-blue-600 text-white font-bold rounded border border-blue-400 shadow-sm";
+                } else if (idx === 0 && step.pointer === 1) {
+                    span.className = "px-1.5 py-0.5 text-slate-500 line-through";
+                } else if (idx === 1 && step.pointer === 1) {
+                    span.className = "px-1.5 py-0.5 bg-green-700 text-white font-bold rounded border border-green-400 shadow-sm";
+                } else {
+                    span.className = "px-1.5 py-0.5 text-slate-300";
+                }
+                streamContainer.appendChild(span);
+            });
+
+            // 4. 控制按鈕狀態
+            const prevBtn = document.getElementById('btn-prev');
+            const nextBtn = document.getElementById('btn-next');
+
+            if (currentIndex === 0) {
+                prevBtn.disabled = true;
+                prevBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200";
+            } else {
+                prevBtn.disabled = false;
+                prevBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200";
+            }
+
+            if (currentIndex === total - 1) {
+                nextBtn.disabled = true;
+                nextBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-slate-200 text-slate-400 text-sm font-medium cursor-not-allowed transition-all duration-200";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm";
+            }
+
+            // 5. 動態渲染 SVG 雙分析樹
+            renderDualTree(step);
+        }
+
+        // SVG 樹渲染函數 (已移除葉節點強制對齊與垂直投影，葉節點正常自然呈現)
+        function renderDualTree(step) {
+            const svg = document.getElementById('tree-svg');
+            svg.innerHTML = ''; // 清空畫布
+
+            // 繪製分割中線 (以簡約線段標記雙領域)
+            const divider = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            divider.setAttribute("x1", "270");
+            divider.setAttribute("y1", "20");
+            divider.setAttribute("x2", "270");
+            divider.setAttribute("y2", "320");
+            divider.setAttribute("stroke", "#e2e8f0");
+            divider.setAttribute("stroke-width", "1.5");
+            divider.setAttribute("stroke-dasharray", "4,4");
+            svg.appendChild(divider);
+
+            // 輔助繪製單側樹函數
+            function drawSideTree(nodes, edges) {
+                // 先畫分支線
+                edges.forEach(edge => {
+                    const fromNode = nodes.find(n => n.id === edge.from);
+                    const toNode = nodes.find(n => n.id === edge.to);
+
+                    if (fromNode && toNode) {
+                        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                        line.setAttribute("x1", fromNode.x);
+                        line.setAttribute("y1", fromNode.y);
+                        line.setAttribute("x2", toNode.x);
+                        line.setAttribute("y2", toNode.y); // 自然斜連線，連線至節點自身的實際Y軸位置
+                        
+                        if (edge.error) {
+                            line.setAttribute("stroke", "#ef4444");
+                            line.setAttribute("stroke-width", "1.5");
+                            line.setAttribute("stroke-dasharray", "3,3");
+                        } else if (edge.highlight) {
+                            line.setAttribute("stroke", "#10b981");
+                            line.setAttribute("stroke-width", "2");
+                        } else {
+                            line.setAttribute("stroke", "#cbd5e1");
+                            line.setAttribute("stroke-width", "1.5");
+                        }
+                        svg.appendChild(line);
+                    }
+                });
+
+                // 後畫節點
+                nodes.forEach(node => {
+                    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                    group.setAttribute("class", "tree-node");
+
+                    let currentY = node.y; // 節點直接採用各自原本設定的 logical y 座標，不強制覆蓋為 LEAF_BOTTOM_Y
+                    let fill = "#ffffff";
+                    let stroke = "#64748b";
+                    let strokeWidth = "1.5";
+                    let textColor = "#0f172a";
+                    let weight = "normal";
+                    let isDoubleBorder = false;
+
+                    const w = 48;
+                    const h = 26;
+
+                    if (node.type === 'terminal') {
+                        fill = "#f1f5f9";
+                        stroke = "#475569";
+                        weight = "bold";
+                        if (node.active) {
+                            fill = "#dbeafe";
+                            stroke = "#2563eb";
+                            textColor = "#1d4ed8";
+                        }
+                        if (node.mismatch) {
+                            fill = "#fef2f2";
+                            stroke = "#ef4444";
+                            textColor = "#b91c1c";
+                        }
+                        if (node.error) {
+                            // 被標記撤銷的分支，淡化顯示
+                            fill = "#ffffff";
+                            stroke = "#cbd5e1";
+                            textColor = "#94a3b8";
+                            strokeWidth = "1";
+                        }
+                    } else if (node.type === 'start') {
+                        stroke = "#059669";
+                        textColor = "#047857";
+                        weight = "bold";
+                        isDoubleBorder = true;
+                    } else if (node.type === 'nonterminal') {
+                        stroke = "#2563eb";
+                        if (node.active) {
+                            strokeWidth = "2";
+                            weight = "bold";
+                        }
+                    }
+
+                    if (node.highlight) {
+                        fill = "#f0fdf4";
+                        stroke = "#10b981";
+                        textColor = "#065f46";
+                        weight = "bold";
+                    }
+
+                    // 繪製圓角矩形
+                    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                    rect.setAttribute("x", node.x - w / 2);
+                    rect.setAttribute("y", currentY - h / 2);
+                    rect.setAttribute("width", w);
+                    rect.setAttribute("height", h);
+                    rect.setAttribute("rx", "4");
+                    rect.setAttribute("fill", fill);
+                    rect.setAttribute("stroke", stroke);
+                    rect.setAttribute("stroke-width", strokeWidth);
+                    group.appendChild(rect);
+
+                    if (isDoubleBorder) {
+                        const innerRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                        innerRect.setAttribute("x", node.x - w / 2 + 2);
+                        innerRect.setAttribute("y", currentY - h / 2 + 2);
+                        innerRect.setAttribute("width", w - 4);
+                        innerRect.setAttribute("height", h - 4);
+                        innerRect.setAttribute("rx", "2");
+                        innerRect.setAttribute("fill", "none");
+                        innerRect.setAttribute("stroke", stroke);
+                        innerRect.setAttribute("stroke-width", "0.8");
+                        group.appendChild(innerRect);
+                    }
+
+                    // 寫入文本
+                    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                    text.setAttribute("x", node.x);
+                    text.setAttribute("y", currentY + 3);
+                    text.setAttribute("text-anchor", "middle");
+                    text.setAttribute("fill", textColor);
+                    text.setAttribute("font-size", "11px");
+                    text.setAttribute("font-family", "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace");
+                    text.setAttribute("font-weight", weight);
+                    text.textContent = node.label;
+                    group.appendChild(text);
+
+                    svg.appendChild(group);
+                });
+            }
+
+            // 繪製左右兩側分析樹
+            drawSideTree(step.leftNodes, step.leftEdges);
+            drawSideTree(step.rightNodes, step.rightEdges);
+        }
+
+        // 互動函數：下一步
+        function nextStep() {
+            if (currentIndex < stepsData.length - 1) {
+                currentIndex++;
+                renderStep();
+            }
+        }
+
+        // 互動函數：上一步
+        function prevStep() {
+            if (currentIndex > 0) {
+                currentIndex--;
+                renderStep();
+            }
+        }
+
+        // 重置演示
+        function resetDemo() {
+            initDemo();
+        }
+
+        // 頁面加載完成
+        window.onload = function() {
+            initDemo();
+        };
+    </script>
+</body>
+</html>

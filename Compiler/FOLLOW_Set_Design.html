@@ -1,0 +1,675 @@
+---
+layout: null
+title: "[Chapter 4.4] 預測分析法 FOLLOW 集合判斷"
+description: "預測分析法建構時需要設定 FOLLOW 集合以進行預測，本模擬說明四種情況下 FOLLOW 集合應如何設計以完整發揮預測分析法能力"
+role: "supplementary"
+related: []
+tags: ["移動端友善"]
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FOLLOW 集合與 FIRST 集合判定法則逐步演示</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .transition-all-custom {
+            transition: all 0.3s ease-in-out;
+        }
+        .step-pill {
+            transition: all 0.3s ease-in-out;
+        }
+        .step-pill.active {
+            background-color: #3b82f6;
+            color: #ffffff;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col justify-between">
+
+    <!-- 頁首 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6 shadow-sm">
+        <div class="max-w-6xl mx-auto flex items-center justify-between">
+            <h1 class="text-xl font-bold tracking-tight text-slate-900">編譯器設計：FOLLOW 集合與 FIRST 集合關聯判定（逐步拆解）</h1>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-mono">Chapter 4.4 Top-Down Parsing</span>
+        </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="max-w-6xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
+        
+        <!-- 左側控制面板與判定說明 -->
+        <section class="lg:col-span-5 flex flex-col gap-4">
+            
+            <!-- 四大情況導覽選擇（點擊會重置步驟） -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-2">
+                <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">請選擇欲示範的情況</h2>
+                
+                <button onclick="selectCase('case1')" id="tab-case1" class="w-full text-left transition-all-custom border border-blue-600 bg-blue-50/50 p-3 rounded-lg text-xs flex flex-col gap-1 hover:bg-blue-50">
+                    <span class="font-bold text-blue-900">情況 1：後接終端符號 (Terminal)</span>
+                    <span class="font-mono text-blue-700">A &rarr; &alpha; X a &beta; &rArr; FOLLOW(X) 加入 { a }</span>
+                </button>
+                
+                <button onclick="selectCase('case2')" id="tab-case2" class="w-full text-left transition-all-custom border border-slate-200 p-3 rounded-lg text-xs flex flex-col gap-1 hover:bg-slate-50">
+                    <span class="font-bold text-slate-700">情況 2：後接非終端符號 (Non-terminal)</span>
+                    <span class="font-mono text-slate-500">A &rarr; &alpha; X Y &beta; &rArr; FOLLOW(X) 加入 FIRST(Y) - { &epsilon; }</span>
+                </button>
+
+                <button onclick="selectCase('case3')" id="tab-case3" class="w-full text-left transition-all-custom border border-slate-200 p-3 rounded-lg text-xs flex flex-col gap-1 hover:bg-slate-50">
+                    <span class="font-bold text-slate-700">情況 3：後接可消解非終端符號 (Nullable)</span>
+                    <span class="font-mono text-slate-500">A &rarr; &alpha; X Y Z &beta; (&epsilon; &isin; FIRST(Y)) &rArr; 續接 FIRST(Z)</span>
+                </button>
+
+                <button onclick="selectCase('case4')" id="tab-case4" class="w-full text-left transition-all-custom border border-slate-200 p-3 rounded-lg text-xs flex flex-col gap-1 hover:bg-slate-50">
+                    <span class="font-bold text-slate-700">情況 4：目標符號位於產生式最右端</span>
+                    <span class="font-mono text-slate-500">A &rarr; &alpha; X &rArr; FOLLOW(X) 加入 FOLLOW(A)</span>
+                </button>
+            </div>
+
+            <!-- 核心逐步說明面板 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between min-h-[300px]">
+                <div>
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-bold text-slate-900 text-sm" id="case-title-display">情況 1 逐步演示</h3>
+                        <span id="step-badge" class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-mono">步驟 1 / 3</span>
+                    </div>
+
+                    <!-- 步驟進度條 -->
+                    <div class="flex gap-1.5 mb-4" id="step-dots-container">
+                        <!-- 動態渲染進度指示器 -->
+                    </div>
+                    
+                    <div class="prose prose-sm text-slate-600 leading-relaxed min-h-[120px]" id="step-desc">
+                        載入中...
+                    </div>
+                </div>
+
+                <!-- 多步互動元素：限制於此二個按鈕 -->
+                <div class="border-t border-slate-100 pt-4 mt-6 flex items-center justify-between gap-3">
+                    <button id="btn-prev" onclick="prevStep()" class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                        上一步 (Prev)
+                    </button>
+                    <button id="btn-next" onclick="nextStep()" class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm">
+                        下一步 (Next)
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- 右側視覺化對比與模擬畫布 -->
+        <section class="lg:col-span-7 flex flex-col gap-4">
+            
+            <!-- 專屬的「文法規則與求解動機」獨立版面 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm transition-all-custom">
+                <div class="flex items-center gap-2 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
+                    <svg class="w-4 h-4 text-blue-500 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                    <span>當前情況：文法規則與解析動機 (Grammar Rule & Motivation)</span>
+                </div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-12 gap-4">
+                    <!-- 左半：公式與實例 -->
+                    <div class="md:col-span-5 flex flex-col gap-2 bg-slate-50 p-3.5 rounded-lg border border-slate-200 font-mono text-xs">
+                        <div>
+                            <span class="text-slate-400 block mb-0.5">抽象公式 (Math Form)：</span>
+                            <span id="math-formula-display" class="font-bold text-slate-800 text-sm">A &rarr; &alpha; X a &beta;</span>
+                        </div>
+                        <div class="mt-1.5 border-t border-slate-200 pt-1.5">
+                            <span class="text-slate-400 block mb-1">完整關聯文法 (Complete Grammar)：</span>
+                            <div id="cfg-example-display" class="font-bold text-blue-600 text-xs leading-relaxed space-y-1">
+                                <!-- JS 動態渲染多行文法規則 -->
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 右半：解析動機 -->
+                    <div class="md:col-span-7 flex flex-col justify-center">
+                        <span class="text-slate-400 text-[11px] font-bold block mb-1">為什麼在此情況下需要對接集合？</span>
+                        <p id="motivation-text-display" class="text-xs text-slate-600 leading-relaxed font-medium">
+                            剖析器在分析非終端符號 X 時，若 X 解析完畢，需要立刻預判後續字元（Lookahead）是否合法。因為 X 右側直接跟著終端符號，該終端符號即為隨後可出現的唯一合法字元。
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 產生式與掃描器視野 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">剖析器掃描器視野 (Scanner's View)</div>
+                
+                <div class="flex flex-col gap-2 bg-slate-900 text-slate-100 p-4 rounded-lg font-mono text-sm shadow-inner">
+                    <div class="flex justify-between text-slate-400 text-xs border-b border-slate-800 pb-1.5 mb-1.5">
+                        <span>產生式規則 (Production Rule)</span>
+                        <span id="current-rule-header">A &rarr; &alpha; X a &beta;</span>
+                    </div>
+                    
+                    <!-- Token 串流與掃描指標 -->
+                    <div class="flex items-center gap-3 py-3 overflow-x-auto justify-center" id="scanner-stream-container">
+                        <!-- JS 動態更新 Token -->
+                    </div>
+
+                    <!-- 狀態讀取指示 -->
+                    <div class="flex justify-between items-center text-xs text-slate-400 pt-2 border-t border-slate-800 mt-1">
+                        <span>當前聚焦符號：<span id="focus-symbol-display" class="text-blue-400 font-bold">-</span></span>
+                        <span>探測器方向：<span id="scan-direction-display" class="text-amber-400 font-bold">向右掃描</span></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 計算狀態與數據對接 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex-grow flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
+                        <div class="flex items-center gap-2">
+                            <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                            <span class="font-bold text-slate-900 text-sm">集合對接與數值歸併狀態</span>
+                        </div>
+                        <span id="eval-status-badge" class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono">狀態更新中</span>
+                    </div>
+
+                    <!-- 對接卡片 -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="data-binding-container">
+                        <!-- JS 動態更新資料卡片 -->
+                    </div>
+                </div>
+
+                <!-- 最終集合累積展示 -->
+                <div class="mt-6 border-t border-slate-100 pt-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                    <div class="text-xs font-bold text-slate-500 mb-2 flex items-center justify-between">
+                        <span>目標集合計算結果</span>
+                        <span class="font-mono text-[10px] text-slate-400">FOLLOW(X) Accumulator</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="font-mono font-bold text-lg text-slate-800" id="target-symbol-header">FOLLOW(X)</span>
+                        <span class="font-mono text-base font-bold text-emerald-600 bg-emerald-50 px-4 py-2 rounded-lg border border-emerald-200 shadow-inner" id="follow-accumulator-display">
+                            { }
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- 頁尾 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500">
+        <div class="max-w-6xl mx-auto">
+             編譯器設計課程輔助學術軟體 - FOLLOW 集合與 FIRST 集合關聯判定
+        </div>
+    </footer>
+
+    <script>
+        // 定義四個情況的各自多步驟數據 (已補齊情況 2 與情況 3 的關聯子規則)
+        const caseDefinitions = {
+            case1: {
+                title: "情況 1：後接終端符號 (Terminal)",
+                headerRule: "S &rarr; id X ; val",
+                mathFormula: "A &rarr; &alpha; X a &beta;",
+                cfgExample: "S &rarr; id X ; val",
+                motivation: "目標符號 <code>X</code> 的右側緊跟著終端符號 <code>;</code>。由於終端符號是最小不可分割的字元，它的首個字元集合（FIRST）就是它自己。因此，我們完全不需要求取任何其他符號的複雜集合，可以直接將該終端符號併入 <code>FOLLOW(X)</code> 中。",
+                steps: [
+                    {
+                        desc: "<b>步驟 1 - 定位目標符號：</b>我們的目標是計算非終端符號 <code>X</code> 的 <code>FOLLOW(X)</code> 集合。在產生式 <code>S &rarr; id X ; val</code> 中，我們首先在右側主體內定位 <code>X</code> 的物理位置。",
+                        focusIndex: 1, // id=0, X=1, ;=2, val=3
+                        tokens: [
+                            { label: "id", type: "other", active: false },
+                            { label: "X", type: "target", active: true },
+                            { label: ";", type: "other", active: false },
+                            { label: "val", type: "other", active: false }
+                        ],
+                        direction: "定位目標符號 X",
+                        cards: [
+                            { title: "目標符號屬性", content: "非終端符號 X<br>待計算：FOLLOW(X)", color: "border-blue-200 bg-blue-50/20 text-blue-800" },
+                            { title: "掃描器狀態", content: "已成功定位目標<br>準備向右探測鄰近符號", color: "border-slate-200 bg-slate-50 text-slate-700" }
+                        ],
+                        accumulator: "{ }"
+                    },
+                    {
+                        desc: "<b>步驟 2 - 向右探測鄰近符號：</b>剖析器向右看一格，發現緊鄰於 <code>X</code> 右側的符號為終端符號 <code>;</code>（分號）。此符號為不可再展開的基本詞彙。",
+                        focusIndex: 2,
+                        tokens: [
+                            { label: "id", type: "other", active: false },
+                            { label: "X", type: "target", active: false },
+                            { label: ";", type: "terminal", active: true },
+                            { label: "val", type: "other", active: false }
+                        ],
+                        direction: "向右探測鄰近符號",
+                        cards: [
+                            { title: "右側鄰近符號", content: "終端符號：<code>;</code><br>性質：不可再消解展開", color: "border-amber-200 bg-orange-50/20 text-orange-800" },
+                            { title: "套用規則判定", content: "符合情況 1：當右側緊接終端符號時，該符號直接屬於跟隨集合", color: "border-slate-200 bg-slate-50 text-slate-700" }
+                        ],
+                        accumulator: "{ }"
+                    },
+                    {
+                        desc: "<b>步驟 3 - 直接歸併終端符號：</b>由於 <code>;</code> 是終端符號，其 <code>FIRST(;)</code> 集合即為自身 <code>{ ; }</code>。我們無須進行任何集合映射，直接將 <code>;</code> 併入 <code>FOLLOW(X)</code> 之中。此情況判定完畢。",
+                        focusIndex: 2,
+                        tokens: [
+                            { label: "id", type: "other", active: false },
+                            { label: "X", type: "target", active: false },
+                            { label: ";", type: "terminal", active: true },
+                            { label: "val", type: "other", active: false }
+                        ],
+                        direction: "執行歸併完成",
+                        cards: [
+                            { title: "對接集合來源", content: "終端符號：<code>;</code><br>直接獲取值：<code>;</code>", color: "border-slate-200 bg-slate-50 text-slate-700" },
+                            { title: "歸併數值指令", content: "FOLLOW(X) &cup;= { ; }", color: "border-emerald-200 bg-emerald-50/20 text-emerald-800 font-mono" }
+                        ],
+                        accumulator: "{ ; }"
+                    }
+                ]
+            },
+            case2: {
+                title: "情況 2：後接非終端符號 (Non-terminal)",
+                headerRule: "E &rarr; id T E'",
+                mathFormula: "A &rarr; &alpha; X Y &beta;",
+                cfgExample: "E &rarr; id T E'<br><span class='text-slate-500 font-normal'>E' &rarr; + T E' | &epsilon;</span>", // 補齊 E' 的規則
+                motivation: "目標符號 <code>T</code> 右側緊密相連的是<b>非終端符號</b> <code>E'</code>（即公式中的 <code>Y</code>）。在解析時，只要 <code>T</code> 解析完，下一個出現在字串中的終端符號，就必然是從 <code>E'</code> 展開並推導在最前端的開頭字元。這就是為什麼 <code>FOLLOW(T)</code> 必須去對接 <code>FIRST(E')</code> 集合的原因。藉由補齊 <code>E' &rarr; + T E' | &epsilon;</code>，我們可以清楚推導出 <code>FIRST(E') = { +, &epsilon; }</code>。",
+                steps: [
+                    {
+                        desc: "<b>步驟 1 - 定位目標符號：</b>我們的目標是計算非終端符號 <code>T</code> 的 <code>FOLLOW(T)</code> 集合。在產生式 <code>E &rarr; id T E'</code> 中，我們首先定位 <code>T</code> 的物理位置。",
+                        focusIndex: 1, // id=0, T=1, E'=2
+                        tokens: [
+                            { label: "id", type: "other", active: false },
+                            { label: "T", type: "target", active: true },
+                            { label: "E'", type: "other", active: false }
+                        ],
+                        direction: "定位目標符號 T",
+                        cards: [
+                            { title: "目標符號屬性", content: "非終端符號 T<br>待計算：FOLLOW(T)", color: "border-blue-200 bg-blue-50/20 text-blue-800" },
+                            { title: "掃描器狀態", content: "已成功定位目標<br>準備向右探測鄰近符號", color: "border-slate-200 bg-slate-50 text-slate-700" }
+                        ],
+                        accumulator: "{ }"
+                    },
+                    {
+                        desc: "<b>步驟 2 - 向右探測鄰近符號：</b>剖析器向右看一格，發現緊鄰 <code>T</code> 右側的符號為<b>非終端符號</b> <code>E'</code>。因為非終端符號可以進一步展開，我們無法直接獲取終端符號。",
+                        focusIndex: 2,
+                        tokens: [
+                            { label: "id", type: "other", active: false },
+                            { label: "T", type: "target", active: false },
+                            { label: "E'", type: "nonterminal", active: true }
+                        ],
+                        direction: "向右探測鄰近符號",
+                        cards: [
+                            { title: "右側鄰近符號", content: "非終端符號：<code>E'</code><br>性質：可展開為其他字串", color: "border-blue-200 bg-blue-50/20 text-blue-800" },
+                            { title: "套用規則判定", content: "符合情況 2：當右側為非終端符號時，必須求取其 FIRST 集合", color: "border-slate-200 bg-slate-50 text-slate-700" }
+                        ],
+                        accumulator: "{ }"
+                    },
+                    {
+                        desc: "<b>步驟 3 - 查詢對接非終端符號的 FIRST：</b>由於任何可能出現在 <code>E'</code> 最前端的符號，都必然會跟在 <code>T</code> 的後面。因此，我們調出預先計算的 <code>FIRST(E') = { +, &epsilon; }</code> 集合（此集合根據其產生式規則 <code>E' &rarr; + T E' | &epsilon;</code> 計算而得）。",
+                        focusIndex: 2,
+                        tokens: [
+                            { label: "id", type: "other", active: false },
+                            { label: "T", type: "target", active: false },
+                            { label: "E'", type: "nonterminal", active: true }
+                        ],
+                        direction: "查詢 FIRST(E')",
+                        cards: [
+                            { title: "求取 FIRST 集合", content: "FIRST(E') = { +, &epsilon; }<br><span class='text-[10px] text-slate-400 font-normal'>(來自規則 E' &rarr; + T E' | &epsilon;)</span>", color: "border-slate-200 bg-slate-50 text-slate-700" },
+                            { title: "空字串過濾規則", content: "依規定必須排除空字串 <code>&epsilon;</code><br>可用元素剩餘：{ + }", color: "border-amber-200 bg-orange-50/20 text-orange-800" }
+                        ],
+                        accumulator: "{ }"
+                    },
+                    {
+                        desc: "<b>步驟 4 - 排除空字串並併入集合：</b>排除 <code>&epsilon;</code> 後，我們將賸餘的有效開頭符號 <code>+</code> 併入 <code>FOLLOW(T)</code> 中。此情況判定完畢（<code>&epsilon;</code> 引發的後續穿透將於情況 3 演示）。",
+                        focusIndex: 2,
+                        tokens: [
+                            { label: "id", type: "other", active: false },
+                            { label: "T", type: "target", active: false },
+                            { label: "E'", type: "nonterminal", active: true }
+                        ],
+                        direction: "執行歸併完成",
+                        cards: [
+                            { title: "對接集合來源", content: "FIRST(E') - {&epsilon;} = <code>{ + }</code>", color: "border-slate-200 bg-slate-50 text-slate-700" },
+                            { title: "歸併數值指令", content: "FOLLOW(T) &cup;= { + }", color: "border-emerald-200 bg-emerald-50/20 text-emerald-800 font-mono" }
+                        ],
+                        accumulator: "{ + }"
+                    }
+                ]
+            },
+            case3: {
+                title: "情況 3：後接可消解非終端符號 (Nullable)",
+                headerRule: "S &rarr; id X Y Z",
+                mathFormula: "A &rarr; &alpha; X Y Z &beta; (&epsilon; &isin; FIRST(Y))",
+                cfgExample: "S &rarr; id X Y Z<br><span class='text-slate-500 font-normal'>Y &rarr; b | &epsilon;</span><br><span class='text-slate-500 font-normal'>Z &rarr; d</span>", // 補齊 Y 和 Z 的規則
+                motivation: "目標符號 <code>X</code> 的右側有非終端符號 <code>Y</code> 與 <code>Z</code>。當我們補齊規則 <code>Y &rarr; b | &epsilon;</code> 與 <code>Z &rarr; d</code> 後，可以明確知道：<code>FIRST(Y) = { b, &epsilon; }</code>，這代表 <code>Y</code> 是一個可消解符號。如果 <code>Y</code> 被推導為 <code>&epsilon;</code> 而消逝，則緊鄰於 <code>X</code> 後方的便是 <code>Z</code> 的開頭。因此，<code>FOLLOW(X)</code> 必須向後穿透對接 <code>FIRST(Z) = { d }</code>。",
+                steps: [
+                    {
+                        desc: "<b>步驟 1 - 定位目標符號：</b>我們的目標是計算非終端符號 <code>X</code> 的 <code>FOLLOW(X)</code> 集合。在產生式 <code>S &rarr; id X Y Z</code> 中，我們定位 <code>X</code> 的物理位置。",
+                        focusIndex: 1, // id=0, X=1, Y=2, Z=3
+                        tokens: [
+                            { label: "id", type: "other", active: false },
+                            { label: "X", type: "target", active: true },
+                            { label: "Y", type: "other", active: false },
+                            { label: "Z", type: "other", active: false }
+                        ],
+                        direction: "定位目標符號 X",
+                        cards: [
+                            { title: "目標符號屬性", content: "非終端符號 X<br>待計算：FOLLOW(X)", color: "border-blue-200 bg-blue-50/20 text-blue-800" },
+                            { title: "掃描器狀態", content: "已成功定位目標<br>準備向右探測鄰近符號", color: "border-slate-200 bg-slate-50 text-slate-700" }
+                        ],
+                        accumulator: "{ }"
+                    },
+                    {
+                        desc: "<b>步驟 2 - 探測鄰近非終端符號並求得 FIRST：</b>向右看一格，緊鄰 <code>X</code> 的為 <code>Y</code>。我們調出預先根據規則 <code>Y &rarr; b | &epsilon;</code> 計算出的 <code>FIRST(Y) = { b, &epsilon; }</code>。首先，排除 <code>&epsilon;</code>，將 <code>b</code> 併入 <code>FOLLOW(X)</code>。",
+                        focusIndex: 2,
+                        tokens: [
+                            { label: "id", type: "other", active: false },
+                            { label: "X", type: "target", active: false },
+                            { label: "Y", type: "nonterminal", active: true },
+                            { label: "Z", type: "other", active: false }
+                        ],
+                        direction: "探測 Y 並求得 FIRST(Y)",
+                        cards: [
+                            { title: "第一層對接來源", content: "FIRST(Y) - {&epsilon;} = <code>{ b }</code><br><span class='text-[10px] text-slate-400 font-normal'>(來自規則 Y &rarr; b | &epsilon;)</span>", color: "border-slate-200 bg-slate-50 text-slate-700" },
+                            { title: "集合累積狀態", content: "FOLLOW(X) &cup;= { b }", color: "border-emerald-200 bg-emerald-50/20 text-emerald-800 font-mono" }
+                        ],
+                        accumulator: "{ b }"
+                    },
+                    {
+                        desc: "<b>步驟 3 - 發現空字串引發向後穿透：</b>由於 <code>&epsilon; &isin; FIRST(Y)</code>，這代表在推導中 <code>Y</code> 有機會縮小消解為空。一旦 <code>Y</code> 消失，<code>X</code> 的後面就相當於直接接著 <code>Z</code>。因此剖析器必須向後穿透，繼續掃描 <code>Z</code>。",
+                        focusIndex: 3,
+                        tokens: [
+                            { label: "id", type: "other", active: false },
+                            { label: "X", type: "target", active: false },
+                            { label: "Y", type: "nonterminal", nullable: true },
+                            { label: "Z", type: "nonterminal", active: true }
+                        ],
+                        direction: "向後穿透掃描 Z",
+                        cards: [
+                            { title: "消解屬性判定", content: "Y 屬於 Nullable<br>啟動向後穿透探測", color: "border-teal-200 bg-teal-50/20 text-teal-800" },
+                            { title: "新探測目標", content: "非終端符號：<code>Z</code><br>準備求取其 FIRST 集合", color: "border-slate-200 bg-slate-50 text-slate-700" }
+                        ],
+                        accumulator: "{ b }"
+                    },
+                    {
+                        desc: "<b>步驟 4 - 歸併後續符號的 FIRST：</b>我們調出根據規則 <code>Z &rarr; d</code> 所求得的 <code>FIRST(Z) = { d }</code>。將其併入 <code>FOLLOW(X)</code> 之中。至此，由可消解性引發的穿透追逃與對接全部完成。",
+                        focusIndex: 3,
+                        tokens: [
+                            { label: "id", type: "other", active: false },
+                            { label: "X", type: "target", active: false },
+                            { label: "Y", type: "nonterminal", nullable: true },
+                            { label: "Z", type: "nonterminal", active: true }
+                        ],
+                        direction: "歸併後續 Z 的 FIRST",
+                        cards: [
+                            { title: "第二層對接來源", content: "FIRST(Z) = <code>{ d }</code><br><span class='text-[10px] text-slate-400 font-normal'>(來自規則 Z &rarr; d)</span>", color: "border-slate-200 bg-slate-50 text-slate-700" },
+                            { title: "最終數值併入", content: "FOLLOW(X) &cup;= { d }", color: "border-emerald-200 bg-emerald-50/20 text-emerald-800 font-mono" }
+                        ],
+                        accumulator: "{ b, d }"
+                    }
+                ]
+            },
+            case4: {
+                title: "情況 4：目標符號位於產生式最右端",
+                headerRule: "A &rarr; id val X",
+                mathFormula: "A &rarr; &alpha; X",
+                cfgExample: "A &rarr; id val X",
+                motivation: "目標符號 <code>X</code> 已經處於產生式規則的最右端（尾部）。在這條產生式中，<code>X</code> 的右邊已經沒有任何更後續的符號可以供我們提取 FIRST 集合。此時，『任何可能緊跟在頭部非終端符號 <code>A</code> 後面的符號，也必能直接跟在 <code>X</code> 後面』。因此 <code>FOLLOW(X)</code> 必須完全繼承 <code>FOLLOW(A)</code>。",
+                steps: [
+                    {
+                        desc: "<b>步驟 1 - 定位目標符號：</b>我們的目標是計算非終端符號 <code>X</code> 的 <code>FOLLOW(X)</code> 集合。在產生式 <code>A &rarr; id val X</code> 中，定位 <code>X</code> 的物理位置。",
+                        focusIndex: 2, // id=0, val=1, X=2
+                        tokens: [
+                            { label: "id", type: "other", active: false },
+                            { label: "val", type: "other", active: false },
+                            { label: "X", type: "target", active: true }
+                        ],
+                        direction: "定位目標符號 X",
+                        cards: [
+                            { title: "目標符號屬性", content: "非終端符號 X<br>待計算：FOLLOW(X)", color: "border-blue-200 bg-blue-50/20 text-blue-800" },
+                            { title: "掃描器狀態", content: "已成功定位目標<br>準備向右探測鄰近符號", color: "border-slate-200 bg-slate-50 text-slate-700" }
+                        ],
+                        accumulator: "{ }"
+                    },
+                    {
+                        desc: "<b>步驟 2 - 探測發現最右端極限：</b>剖析器嘗試向右看，發現右側已空無一物（<code>X</code> 已處於產生式的末端）。這意味著後面沒有任何符號可以提供 FIRST 集合。",
+                        focusIndex: 2,
+                        tokens: [
+                            { label: "id", type: "other", active: false },
+                            { label: "val", type: "other", active: false },
+                            { label: "X", type: "target", active: true }
+                        ],
+                        direction: "向右探測（已達末端）",
+                        cards: [
+                            { title: "掃描邊界狀態", content: "右側邊界：<code>EOF / Null</code>", color: "border-amber-200 bg-orange-50/20 text-orange-800" },
+                            { title: "套用規則判定", content: "符合情況 4：目標已在最右端。任何能接在左側頭部 A 後面的符號，也必能接在 X 後面", color: "border-slate-200 bg-slate-50 text-slate-700" }
+                        ],
+                        accumulator: "{ }"
+                    },
+                    {
+                        desc: "<b>步驟 3 - 追溯並獲取產生式頭部的 FOLLOW：</b>剖析器將視線轉向左側產生式的頭端非終端符號 <code>A</code>。調出預先計算好的 <code>FOLLOW(A) = { $, ) }</code> 集合，作為我們繼承的來源。",
+                        focusIndex: 2,
+                        tokens: [
+                            { label: "id", type: "other", active: false },
+                            { label: "val", type: "other", active: false },
+                            { label: "X", type: "target", active: true }
+                        ],
+                        direction: "追溯並對接 FOLLOW(A)",
+                        cards: [
+                            { title: "頭端符號資訊", content: "產生式頭部：<code>A</code>", color: "border-slate-200 bg-slate-50 text-slate-700" },
+                            { title: "頭部 FOLLOW 集合", content: "FOLLOW(A) = <code>{ $, ) }</code>", color: "border-emerald-200 bg-emerald-50/20 text-emerald-800 font-mono" }
+                        ],
+                        accumulator: "{ }"
+                    },
+                    {
+                        desc: "<b>步驟 4 - 繼承併入頭部集合：</b>將 <code>FOLLOW(A)</code> 的所有元素 <code>{ $, ) }</code> 完整複製並併入 <code>FOLLOW(X)</code>。此情況判定完畢。",
+                        focusIndex: 2,
+                        tokens: [
+                            { label: "id", type: "other", active: false },
+                            { label: "val", type: "other", active: false },
+                            { label: "X", type: "target", active: true }
+                        ],
+                        direction: "執行歸併完成",
+                        cards: [
+                            { title: "繼承對接指令", content: "FOLLOW(X) &cup;= FOLLOW(A)", color: "border-slate-200 bg-slate-50 text-slate-700" },
+                            { title: "最終數值併入", content: "FOLLOW(X) &cup;= { $, ) }", color: "border-emerald-200 bg-emerald-50/20 text-emerald-800 font-mono" }
+                        ],
+                        accumulator: "{ $, ) }"
+                    }
+                ]
+            }
+        };
+
+        let currentCaseKey = "case1";
+        let currentStepIndex = 0;
+
+        // 初始化演示
+        function initDemo() {
+            currentCaseKey = "case1";
+            currentStepIndex = 0;
+            renderStep();
+        }
+
+        // 切換情況案例
+        function selectCase(caseKey) {
+            if (currentCaseKey === caseKey) return;
+            currentCaseKey = caseKey;
+            currentStepIndex = 0;
+
+            // 更新左側卡片視覺樣式
+            const keys = ["case1", "case2", "case3", "case4"];
+            keys.forEach(key => {
+                const button = document.getElementById(`tab-${key}`);
+                if (key === caseKey) {
+                    button.className = "w-full text-left transition-all-custom border border-blue-600 bg-blue-50/50 p-3 rounded-lg text-xs flex flex-col gap-1 hover:bg-blue-50";
+                } else {
+                    button.className = "w-full text-left transition-all-custom border border-slate-200 p-3 rounded-lg text-xs flex flex-col gap-1 hover:bg-slate-50";
+                }
+            });
+
+            renderStep();
+        }
+
+        // 渲染步驟資訊與數據對接
+        function renderStep() {
+            const caseData = caseDefinitions[currentCaseKey];
+            const step = caseData.steps[currentStepIndex];
+            const totalSteps = caseData.steps.length;
+
+            // 0. 更新新版「文法規則與求解動機」獨立面板
+            document.getElementById("math-formula-display").innerHTML = caseData.mathFormula;
+            document.getElementById("cfg-example-display").innerHTML = caseData.cfgExample;
+            document.getElementById("motivation-text-display").innerHTML = caseData.motivation;
+
+            // 1. 更新說明標題與 badge
+            document.getElementById("case-title-display").innerHTML = caseData.title;
+            document.getElementById("step-badge").textContent = `步驟 ${currentStepIndex + 1} / ${totalSteps}`;
+            document.getElementById("step-desc").innerHTML = step.desc;
+
+            // 2. 更新步驟進度條 (Dot indicators)
+            const dotsContainer = document.getElementById("step-dots-container");
+            dotsContainer.innerHTML = "";
+            for (let i = 0; i < totalSteps; i++) {
+                const dot = document.createElement("div");
+                if (i === currentStepIndex) {
+                    dot.className = "step-pill h-1.5 flex-grow rounded-full bg-blue-600";
+                } else if (i < currentStepIndex) {
+                    dot.className = "step-pill h-1.5 flex-grow rounded-full bg-blue-300";
+                } else {
+                    dot.className = "step-pill h-1.5 flex-grow rounded-full bg-slate-200";
+                }
+                dotsContainer.appendChild(dot);
+            }
+
+            // 3. 限制互動按鈕狀態
+            const prevBtn = document.getElementById("btn-prev");
+            const nextBtn = document.getElementById("btn-next");
+
+            if (currentStepIndex === 0) {
+                prevBtn.disabled = true;
+                prevBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200";
+            } else {
+                prevBtn.disabled = false;
+                prevBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200";
+            }
+
+            if (currentStepIndex === totalSteps - 1) {
+                nextBtn.disabled = true;
+                nextBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-slate-200 text-slate-400 text-sm font-medium cursor-not-allowed transition-all duration-200";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm";
+            }
+
+            // 4. 渲染剖析器掃描器視野 (Scanner View)
+            document.getElementById("current-rule-header").innerHTML = caseData.headerRule;
+            document.getElementById("focus-symbol-display").textContent = step.tokens[step.focusIndex].label;
+            document.getElementById("scan-direction-display").textContent = step.direction;
+
+            const streamContainer = document.getElementById("scanner-stream-container");
+            streamContainer.innerHTML = "";
+
+            step.tokens.forEach((tk, idx) => {
+                // 建立 Token 的包裝元件
+                const wrapper = document.createElement("div");
+                wrapper.className = "flex flex-col items-center gap-1 transition-all-custom";
+
+                const tokenCard = document.createElement("div");
+                let baseStyle = "px-4 py-2 rounded-lg font-mono text-sm font-bold border transition-all-custom ";
+                
+                // 根據 Token 屬性渲染顏色
+                if (tk.type === "target") {
+                    baseStyle += "bg-blue-600 text-white border-blue-400 shadow-lg scale-105";
+                } else if (tk.type === "terminal") {
+                    baseStyle += "bg-orange-500/10 text-orange-400 border-orange-500/30";
+                } else if (tk.type === "nonterminal") {
+                    baseStyle += "bg-teal-500/10 text-teal-400 border-teal-500/30";
+                } else {
+                    baseStyle += "bg-slate-800 text-slate-400 border-slate-700";
+                }
+
+                // 如果目前是聚焦標示，則施加外框提示
+                if (idx === step.focusIndex) {
+                    baseStyle += " ring-2 ring-amber-400 ring-offset-2 ring-offset-slate-950";
+                }
+
+                tokenCard.className = baseStyle;
+                tokenCard.innerHTML = tk.label;
+
+                // 標籤提示
+                const typeLabel = document.createElement("span");
+                typeLabel.className = "text-[10px] font-mono text-slate-500";
+                if (tk.type === "target") typeLabel.textContent = "Target X";
+                else if (tk.type === "terminal") typeLabel.textContent = "Terminal";
+                else if (tk.type === "nonterminal") typeLabel.textContent = "Non-Term";
+                else typeLabel.textContent = "Symbol";
+
+                wrapper.appendChild(tokenCard);
+                wrapper.appendChild(typeLabel);
+                streamContainer.appendChild(wrapper);
+            });
+
+            // 5. 渲染數據對接卡片
+            const cardsContainer = document.getElementById("data-binding-container");
+            cardsContainer.innerHTML = "";
+
+            step.cards.forEach(card => {
+                const cardDiv = document.createElement("div");
+                cardDiv.className = `border p-4 rounded-xl flex flex-col gap-1.5 transition-all-custom ${card.color}`;
+
+                const title = document.createElement("span");
+                title.className = "text-xs font-bold uppercase tracking-wider opacity-80";
+                title.textContent = card.title;
+
+                const content = document.createElement("p");
+                content.className = "text-xs leading-normal font-semibold";
+                content.innerHTML = card.content;
+
+                cardDiv.appendChild(title);
+                cardDiv.appendChild(content);
+                cardsContainer.appendChild(cardDiv);
+            });
+
+            // 6. 更新最終 Accumulator 的顯示狀態
+            const targetHeader = document.getElementById("target-symbol-header");
+            const accDisplay = document.getElementById("follow-accumulator-display");
+            
+            // 動態調整目標名稱
+            const activeTargetSymbol = step.tokens.find(t => t.type === "target")?.label || "X";
+            targetHeader.textContent = `FOLLOW(${activeTargetSymbol})`;
+            accDisplay.textContent = step.accumulator;
+
+            // 如果累加器中有東西，標記為綠色亮起
+            if (step.accumulator !== "{ }") {
+                accDisplay.className = "font-mono text-base font-bold text-emerald-600 bg-emerald-50 px-4 py-2 rounded-lg border border-emerald-200 shadow-inner";
+                document.getElementById("eval-status-badge").textContent = "值已歸併";
+                document.getElementById("eval-status-badge").className = "text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-mono";
+            } else {
+                accDisplay.className = "font-mono text-base font-bold text-slate-400 bg-slate-100 px-4 py-2 rounded-lg border border-slate-200 shadow-inner animate-pulse";
+                document.getElementById("eval-status-badge").textContent = "掃描比對中";
+                document.getElementById("eval-status-badge").className = "text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-mono";
+            }
+        }
+
+        // 互動函數：下一步
+        function nextStep() {
+            const caseData = caseDefinitions[currentCaseKey];
+            if (currentStepIndex < caseData.steps.length - 1) {
+                currentStepIndex++;
+                renderStep();
+            }
+        }
+
+        // 互動函數：上一步
+        function prevStep() {
+            if (currentStepIndex > 0) {
+                currentStepIndex--;
+                renderStep();
+            }
+        }
+
+        // 互動函數：重置
+        function resetDemo() {
+            initDemo();
+        }
+
+        // 頁面載入完成後執行
+        window.onload = function() {
+            initDemo();
+        };
+    </script>
+</body>
+</html>
