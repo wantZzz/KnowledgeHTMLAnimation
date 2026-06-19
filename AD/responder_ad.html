@@ -1,0 +1,972 @@
+---
+layout: null
+title: "Responder 毒化 LLMNR"
+description: "先以 Responder 冒用目標毒化 LLMNR，模擬以 SMB 挑戰與中繼 session 劫持奪取雜湊與敏感資訊"
+role: "primary"
+related: []
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Responder LLMNR 毒化與 NTLM 中繼實戰流程演示</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght=400;700&family=Inter:wght=400;600&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            color: #e2e8f0;
+            overflow-x: hidden;
+        }
+
+        .terminal-font {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .protocol-pipe {
+            height: 4px;
+            background: #334155;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .packet {
+            width: 16px;
+            height: 8px;
+            background: #38bdf8;
+            position: absolute;
+            top: -2px;
+            border-radius: 2px;
+            box-shadow: 0 0 8px #38bdf8;
+        }
+
+        @keyframes transmit-right {
+            from { left: 0%; }
+            to { left: 100%; }
+        }
+
+        @keyframes transmit-left {
+            from { left: 100%; }
+            to { left: 0%; }
+        }
+
+        @keyframes transmit-middle-right {
+            from { left: 50%; }
+            to { left: 100%; }
+        }
+
+        @keyframes transmit-middle-left {
+            from { left: 100%; }
+            to { left: 50%; }
+        }
+
+        @keyframes transmit-left-middle {
+            from { left: 0%; }
+            to { left: 50%; }
+        }
+
+        @keyframes transmit-middle-to-left {
+            from { left: 50%; }
+            to { left: 0%; }
+        }
+
+        .animate-transmit-right { animation: transmit-right 1s ease-in-out forwards; }
+        .animate-transmit-left { animation: transmit-left 1s ease-in-out forwards; }
+        .animate-transmit-mr { animation: transmit-middle-right 0.8s ease-in-out forwards; }
+        .animate-transmit-ml { animation: transmit-middle-left 0.8s ease-in-out forwards; }
+        .animate-transmit-lm { animation: transmit-left-middle 0.8s ease-in-out forwards; }
+        .animate-transmit-mtl { animation: transmit-middle-to-left 0.8s ease-in-out forwards; }
+
+        .console-line {
+            opacity: 0;
+            transform: translateY(5px);
+            transition: all 0.2s ease;
+        }
+
+        .console-line.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .app-container {
+            width: 1536px;
+            height: 720px;
+            margin: 20px auto;
+        }
+		
+		.custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.1);
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body class="p-4 flex items-center justify-center min-h-screen">
+
+<div class="app-container flex flex-col gap-4">
+    <!-- 頂部標題與狀態列 -->
+    <div class="flex justify-between items-center bg-slate-800 p-4 rounded-t-xl border-b border-slate-700">
+        <div class="flex items-center gap-3">
+            <!-- 盾牌警示圖標 -->
+            <svg class="w-6 h-6 text-sky-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                <line x1="12" y1="8" x2="12" y2="12"/>
+                <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <h1 class="text-xl font-bold tracking-tight">Active Directory 實戰：Responder 毒化、Hash 擷取與中繼轉發模擬</h1>
+        </div>
+        <div class="flex gap-2 text-xs terminal-font">
+            <span class="px-2 py-1 bg-slate-900 rounded border border-slate-600 text-slate-400">STATUS: NETWORK_READY</span>
+            <span id="step-counter" class="px-2 py-1 bg-sky-900/50 rounded border border-sky-600 text-sky-300">STEP: 0/0</span>
+        </div>
+    </div>
+
+    <!-- 主顯示區域 -->
+    <div class="flex-1 grid grid-cols-12 gap-4 overflow-hidden min-h-0">
+        
+        <!-- 左側：網路拓撲及流量視覺化 -->
+        <div class="col-span-8 bg-slate-900 rounded-xl p-6 flex flex-col justify-between border border-slate-800 relative">
+            
+            <!-- 模式選擇提示與當前狀態 -->
+            <div class="flex flex-col gap-2 border-b border-slate-800 pb-3">
+                <div class="flex justify-between items-center">
+                    <div class="flex gap-4">
+                        <button id="mode-hash-btn" class="px-3 py-1.5 text-xs font-semibold rounded border border-sky-500 bg-sky-900/40 text-sky-300 transition-all">
+                            僅擷取 NetNTLM Hash 模式
+                        </button>
+                        <button id="mode-relay-btn" class="px-3 py-1.5 text-xs font-semibold rounded border border-slate-700 hover:border-slate-500 text-slate-400 transition-all">
+                            NTLM 中繼轉發模式 (Relay)
+                        </button>
+                    </div>
+                    <div class="text-[11px] terminal-font text-slate-400 flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                        <span>監聽介面: eth0 (Promiscuous Mode)</span>
+                    </div>
+                </div>
+                <!-- 模式切換警告 -->
+                <div id="mode-warning-banner" class="hidden text-xs bg-red-950/40 border border-red-800/60 text-red-400 px-3 py-1.5 rounded transition-all">
+                    偵察已在執行中。更換演示模式前，必須先點擊右下方「重置模擬狀態」按鈕還原系統狀態。
+                </div>
+            </div>
+
+            <!-- 網路節點拓撲圖 -->
+            <div class="flex justify-between items-center px-6 relative h-64 my-4">
+                
+                <!-- 受害者節點 (Windows Client) -->
+                <div class="flex flex-col items-center gap-2 z-10 w-40">
+                    <div class="w-16 h-16 bg-slate-800 rounded-2xl flex items-center justify-center border-2 border-slate-600 shadow-lg" id="node-victim">
+                        <!-- 桌上型電腦圖標 -->
+                        <svg class="w-8 h-8 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                            <line x1="8" y1="21" x2="16" y2="21"/>
+                            <line x1="12" y1="17" x2="12" y2="21"/>
+                        </svg>
+                    </div>
+                    <span class="font-bold text-slate-300 text-sm">受害者主機</span>
+                    <span class="text-[10px] terminal-font text-slate-500">192.168.157.11 (WINTERFELL)</span>
+                    <span class="text-[10px] terminal-font px-2 py-0.5 bg-slate-800 text-sky-400 rounded" id="victim-status">狀態: 正常運作</span>
+                </div>
+
+                <!-- 傳輸通道 (Pipes) -->
+                <div class="flex-1 px-4 mt-[-20px] flex flex-col gap-3">
+                    <!-- 左側通道一：受害者 與 攻擊者 之間的 LLMNR/NBT-NS 廣播 -->
+                    <div class="relative">
+                        <div class="flex justify-between text-[10px] text-slate-500 mb-1">
+                            <span>LLMNR/NBT-NS 廣播與毒化 (UDP 5355)</span>
+                            <span id="pipe-left-llmnr-status" class="text-slate-600 uppercase italic text-[9px]">IDLE</span>
+                        </div>
+                        <div class="protocol-pipe rounded-full bg-slate-800" id="pipe-left-llmnr">
+                            <div id="packet-container-left-llmnr"></div>
+                        </div>
+                    </div>
+
+                    <!-- 左側通道二：受害者 與 攻擊者 之間的 SMB 連線與驗證 -->
+                    <div class="relative">
+                        <div class="flex justify-between text-[10px] text-slate-500 mb-1">
+                            <span>SMB 認證與建立 (TCP 445)</span>
+                            <span id="pipe-left-smb-status" class="text-slate-600 uppercase italic text-[9px]">IDLE</span>
+                        </div>
+                        <div class="protocol-pipe rounded-full bg-slate-800" id="pipe-left-smb">
+                            <div id="packet-container-left-smb"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 中間：攻擊者節點 (Kali Linux) -->
+                <div class="flex flex-col items-center gap-2 z-10 w-44">
+                    <div class="w-20 h-20 bg-slate-800 rounded-2xl flex items-center justify-center border-2 border-sky-500 shadow-lg shadow-sky-500/20" id="node-attacker">
+                        <!-- 終端機圖標 -->
+                        <svg class="w-10 h-10 text-sky-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="4 17 10 11 4 5"/>
+                            <line x1="12" y1="19" x2="20" y2="19"/>
+                        </svg>
+                    </div>
+                    <span class="font-bold text-sky-400 text-sm">攻擊者 (Kali Linux)</span>
+                    <span class="text-[10px] terminal-font text-slate-500">192.168.157.50</span>
+                    <span class="text-[10px] terminal-font px-2 py-0.5 bg-sky-950 text-sky-300 rounded border border-sky-800" id="attacker-mode-tag">Responder 啟動中</span>
+                </div>
+
+                <!-- 傳輸通道 (Pipes) 第二段由攻擊者往目標主機 (僅在 Relay 模式顯示) -->
+                <div class="flex-1 px-4 mt-[-20px] flex flex-col gap-3" id="pipe-relay-block">
+                    <!-- SMB 中繼與驗證 (原中繼轉發與SMB協定互動併合) -->
+                    <div class="relative">
+                        <div class="flex justify-between text-[10px] text-slate-500 mb-1">
+                            <span>SMB 中繼與驗證 (TCP 445)</span>
+                            <span id="pipe-right-smb-status" class="text-slate-600 uppercase italic text-[9px]">IDLE</span>
+                        </div>
+                        <div class="protocol-pipe rounded-full bg-slate-800" id="pipe-right-smb">
+                            <div id="packet-container-right-smb"></div>
+                        </div>
+                    </div>
+                    <!-- DCERPC 具名管道 (\PIPE\samr) -->
+                    <div class="relative">
+                        <div class="flex justify-between text-[10px] text-slate-500 mb-1">
+                            <span>DCERPC 具名管道 (\PIPE\samr)</span>
+                            <span id="pipe-right-dcerpc-status" class="text-slate-600 uppercase italic text-[9px]">CLOSED</span>
+                        </div>
+                        <div class="protocol-pipe rounded-full bg-slate-800" id="pipe-right-dcerpc">
+                            <div id="packet-container-right-dcerpc"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 目標伺服器節點 (Windows Server Target) -->
+                <div class="flex flex-col items-center gap-2 z-10 w-40" id="node-target-wrapper">
+                    <div class="w-16 h-16 bg-slate-800 rounded-2xl flex items-center justify-center border-2 border-slate-700 shadow-lg" id="node-target">
+                        <!-- 伺服器圖標 -->
+                        <svg class="w-8 h-8 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+                            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+                            <line x1="6" y1="6" x2="6.01" y2="6"/>
+                            <line x1="6" y1="18" x2="6.01" y2="18"/>
+                        </svg>
+                    </div>
+                    <span class="font-bold text-slate-400 text-sm">目標主機 (SMB 靶機)</span>
+                    <span class="text-[10px] terminal-font text-slate-500">192.168.157.22 (KINGSLANDING)</span>
+                    <span class="text-[10px] terminal-font px-2 py-0.5 bg-slate-800 text-slate-500 rounded" id="target-status">狀態: 未連線</span>
+                </div>
+
+            </div>
+
+            <!-- 詳細封包流量檢驗面板 -->
+            <div class="bg-slate-950 rounded-lg p-4 border border-slate-800 h-48 flex flex-col">
+                <div class="flex justify-between items-center mb-1 shrink-0">
+                    <div class="flex items-center gap-2 text-xs font-semibold text-slate-400 uppercase tracking-widest">
+                        <!-- 數據二進位圖標 -->
+                        <svg class="w-3.5 h-3.5 text-sky-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="14" y="14" width="4" height="6" rx="2"/>
+                            <rect x="6" y="4" width="4" height="6" rx="2"/>
+                            <path d="M6 20h4"/>
+                            <path d="M14 10h4"/>
+                            <path d="M6 14h2v6"/>
+                            <path d="M14 4h2v6"/>
+                        </svg>
+                        流量監聽與封包結構解析
+                    </div>
+                    <div id="opnum-tag" class="text-[10px] terminal-font bg-slate-800 px-2 py-0.5 rounded text-slate-400">INFO: INITIALIZING</div>
+                </div>
+
+                <!-- 發送端與接收端與協定縮寫標註列 -->
+                <div class="grid grid-cols-12 gap-2 bg-slate-900 px-3 py-1.5 rounded mb-2 border border-slate-800/80 text-[10px] text-slate-400 shrink-0">
+                    <div class="col-span-4 flex items-center gap-1">
+                        <span class="text-slate-500 font-semibold">協定簡稱:</span>
+                        <span id="inspect-proto" class="text-sky-400 font-bold terminal-font">N/A</span>
+                    </div>
+                    <div class="col-span-4 flex items-center gap-1 justify-center">
+                        <span class="text-slate-500 font-semibold">發送端 (Src):</span>
+                        <span id="inspect-src" class="text-indigo-400 font-semibold terminal-font">N/A</span>
+                    </div>
+                    <div class="col-span-4 flex items-center gap-1 justify-end">
+                        <span class="text-slate-500 font-semibold">接收端 (Dst):</span>
+                        <span id="inspect-dst" class="text-emerald-400 font-semibold terminal-font">N/A</span>
+                    </div>
+                </div>
+
+                <div class="flex-1 flex gap-4 min-h-0">
+                    <div class="flex-1 flex flex-col border-r border-slate-800 pr-2">
+                        <div class="text-[10px] text-sky-500/70 mb-1 font-bold uppercase">&gt;&gt;&gt; 發送端數據結構 (Source Payload)</div>
+                        <div id="inspect-req" class="terminal-font text-[11px] text-sky-400/90 overflow-y-auto italic whitespace-pre-wrap custom-scrollbar">等待模擬流程開始...</div>
+                    </div>
+                    <div class="flex-1 flex flex-col pl-2">
+                        <div class="text-[10px] text-green-500/70 mb-1 font-bold uppercase">&lt;&lt;&lt; 接收端回應結構 (Destination Response)</div>
+                        <div id="inspect-res" class="terminal-font text-[11px] text-green-400/90 overflow-y-auto italic whitespace-pre-wrap custom-scrollbar">等待外部事件觸發...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右側：主控台終端機與互動控制台 -->
+        <div class="col-span-4 flex flex-col gap-4 overflow-hidden">
+            
+            <!-- 終端機日誌輸出 -->
+            <div class="flex-1 bg-black rounded-xl p-4 border border-slate-800 flex flex-col overflow-hidden">
+                <div class="flex items-center justify-between mb-3 border-b border-slate-800 pb-2 shrink-0">
+                    <div class="flex items-center gap-2">
+                        <div class="w-3 h-3 rounded-full bg-slate-700"></div>
+                        <div class="w-3 h-3 rounded-full bg-slate-700"></div>
+                        <div class="w-3 h-3 rounded-full bg-slate-700"></div>
+                        <span class="text-xs text-slate-500 ml-2 terminal-font">attack_process.log</span>
+                    </div>
+                    <span class="text-[10px] terminal-font text-slate-600" id="tool-name-indicator">Responder (v3.1.1)</span>
+                </div>
+                <div id="console-output" class="flex-1 terminal-font text-[11px] overflow-y-auto space-y-1.5 custom-scrollbar pr-2">
+                    <div class="text-slate-600">[info] 系統就緒。請在下方選擇模式，並點擊按鈕觸發網路事件。</div>
+                </div>
+            </div>
+
+            <!-- 操作控制面板 -->
+            <div class="bg-slate-800 rounded-xl p-6 border border-slate-700 shadow-xl shrink-0">
+                <div class="text-sm font-semibold text-slate-400 mb-3 flex items-center gap-2">
+                    <!-- 齒輪控制圖標 -->
+                    <svg class="w-4 h-4 text-sky-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                    互動式攻防控制步驟
+                </div>
+                
+                <!-- 引導描述 -->
+                <div id="instruction-text" class="text-xs mb-4 text-slate-300 min-h-[44px] leading-relaxed border-l-2 border-sky-500 pl-3">
+                    初始化完成。請在左上角選擇您要演示的攻擊手法分支，然後點擊按鈕啟動。
+                </div>
+
+                <!-- 互動決策與動作按鈕 -->
+                <div class="flex flex-col gap-2 animate-fade-in">
+                    <!-- 用於需要使用者二選一或手動判定比對時的第二按鈕 -->
+                    <button id="verify-btn" class="hidden w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 px-4 text-xs rounded transition-all transform active:scale-95 shadow">
+                        進行欄位手動比對
+                    </button>
+                    
+                    <button id="next-btn" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-2.5 px-4 text-xs rounded flex items-center justify-center gap-2 transition-all transform active:scale-95 shadow">
+                        <span>啟動第一步模擬</span>
+                        <!-- 向右箭頭 -->
+                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="5" y1="12" x2="19" y2="12"/>
+                            <polyline points="12 5 19 12 12 19"/>
+                        </svg>
+                    </button>
+
+                    <!-- 重置按鈕 -->
+                    <button id="reset-btn" class="w-full bg-transparent hover:bg-slate-700/50 text-slate-300 border border-slate-600 font-bold py-1.5 px-4 text-xs rounded flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-sm">
+                        <!-- 重新整理/重置 圖標 -->
+                        <svg class="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                        </svg>
+                        <span>重置模擬狀態</span>
+                    </button>
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+</div>
+
+<script>
+    // 攻防數據集定義
+    const hashSteps = [
+        {
+            instruction: "步驟 1：受害者主機發送 LLMNR 多播查詢。由於解析不存在的主機名稱 shadowcat，其在網域內發送 LLMNR 廣播。",
+            pipe: "left-llmnr",
+            dir: "request",
+            tag: "LLMNR_MULTICAST",
+            proto: "LLMNR",
+            src: "受害者 (192.168.157.11)",
+            dst: "多播群組 (224.0.0.252)",
+            req: "Link-Local Multicast Name Resolution\nQuery ID: 0x3ac4\nType: Host Query (A)\nTarget Name: shadowcat\nDestination IP: 224.0.0.252 (Port 5355 UDP)",
+            res: "Waiting for network packet response...",
+            console: "[info] 受害者 WINTERFELL (192.168.157.11) 無法透過 DNS 解析 \\\\shadowcat\n[info] 觸發 LLMNR 廣播封包發送至 224.0.0.252:5355",
+            nodeUpdates: { victim: "border-sky-500 shadow-md", attacker: "border-sky-500", target: "border-slate-800" },
+            buttonText: "辨識廣播並進行毒化回應",
+            requiresAction: true,
+            actionLabel: "確認廣播主機名稱是否相符",
+            actionFunc: function() {
+                addConsoleLine("[detect] 偵測到對名稱 'shadowcat' 的 LLMNR 查詢封包");
+                document.getElementById('inspect-res').innerText = "UDP 5355 接收完成：Target matches query list (shadowcat).";
+            }
+        },
+        {
+            instruction: "步驟 2：Responder 送回惡意單播毒化回應。偽稱自身即為該不存在主機的所在地 IP (192.168.157.50)。",
+            pipe: "left-llmnr",
+            dir: "response",
+            tag: "LLMNR_POISON_RESPONSE",
+            proto: "LLMNR",
+            src: "攻擊者 (192.168.157.50)",
+            dst: "受害者 (192.168.157.11)",
+            req: "Source IP: 192.168.157.50 (Port 5355 UDP)\nDestination IP: 192.168.157.11\nResponse ID: 0x3ac4\nQuery Answer: shadowcat is at 192.168.157.50",
+            res: "Accepted by Victim (Trusting local broadcast reply)",
+            console: "[poison] Responder 發送毒化響應：shadowcat -> 192.168.157.50\n[info] 誘騙封包傳輸完成",
+            nodeUpdates: { victim: "border-amber-500 shadow-md", attacker: "border-sky-500 shadow-lg shadow-sky-500/20", target: "border-slate-800" },
+            buttonText: "驗證受害者連線請求",
+            requiresAction: false
+        },
+        {
+            instruction: "步驟 3：受害者接受毒化結果，發送 TCP 握手並請求 SMB 身分驗證。其嘗試與該 IP 的 445 連接埠建立通訊。",
+            pipe: "left-smb",
+            dir: "request",
+            tag: "SMB_TCP_CONNECT",
+            proto: "TCP / SMB2",
+            src: "受害者 (192.168.157.11)",
+            dst: "攻擊者 (192.168.157.50)",
+            req: "Transmission Control Protocol (Port 445)\nFlags: SYN\nSource: 192.168.157.11:49221 -> Destination: 192.168.157.50:445",
+            res: "Source: 192.168.157.50:445 -> Destination: 192.168.157.11:49221\nFlags: SYN, ACK\nEstablished.",
+            console: "[info] 偵測到來自 192.168.157.11 的 SMB 連線請求\n[info] 建立 TCP Session ID: 0x0001",
+            nodeUpdates: { victim: "border-emerald-500 shadow-md", attacker: "border-emerald-500 shadow-lg shadow-emerald-500/20", target: "border-slate-800" },
+            buttonText: "發送認證挑戰值 (Challenge)",
+            requiresAction: true,
+            actionLabel: "配置隨機挑戰值 1122334455667788",
+            actionFunc: function() {
+                addConsoleLine("[config] 設定 NTLMv2 Challenge: 1122334455667788");
+                document.getElementById('inspect-res').innerText = "Server Challenge configured: 1122334455667788";
+            }
+        },
+        {
+            instruction: "步驟 4：Responder 傳回 NTLM 挑戰值。要求受害者主機針對指定的挑戰編碼進行簽章驗證。",
+            pipe: "left-smb",
+            dir: "response",
+            tag: "SMB_NEGOTIATE_CHALLENGE",
+            proto: "SMB2",
+            src: "攻擊者 (192.168.157.50)",
+            dst: "受害者 (192.168.157.11)",
+            req: "SMB2 Protocol: NEGOTIATE Response (0x72)\nNTLM Server Challenge: 1122334455667788\nTarget Name: NORTH.LOCAL",
+            res: "Received by Client. Awaiting cryptographic signature response.",
+            console: "[info] 向受害者主機發送驗證挑戰碼 1122334455667788\n[info] 觸發客戶端安全性憑證雜湊計算",
+            nodeUpdates: { victim: "border-emerald-500 shadow-md", attacker: "border-emerald-500 shadow-lg shadow-emerald-500/20", target: "border-slate-800" },
+            buttonText: "獲取最終雜湊結果 (NetNTLM Hash)",
+            requiresAction: false
+        },
+        {
+            instruction: "步驟 5：受害者計算響應值並回傳。利用自身的密碼雜湊與該挑戰值計算出 NetNTLMv2 雜湊並回傳給攻擊者。",
+            pipe: "left-smb",
+            dir: "request",
+            tag: "SMB_SESSION_SETUP_RESP",
+            proto: "SMB2",
+            src: "受害者 (192.168.157.11)",
+            dst: "攻擊者 (192.168.157.50)",
+            req: "SMB2 Protocol: SESSION_SETUP Request\nDomain: NORTH\nUser: EDDARD.STARK\nNTLMv2 Response: HMAC-MD5(Challenge, MD4(Password), ...)\nProof: 9fbc38d93c121da0c58e809312b9d...",
+            res: "Session Setup Failure: STATUS_ACCESS_DENIED (Responder purposefully denies login)",
+            console: "[+] NetNTLMv2 Hash 擷取成功：\nEDDARD.STARK::NORTH:1122334455667788:9fbc38d93c121da0c58e809312b9d:0101000000000000b080fc858b2cd601...\n[info] 連線已斷開。所得雜湊值可用於後續離線暴力破解。",
+            nodeUpdates: { victim: "border-slate-600", attacker: "border-sky-500 shadow-lg", target: "border-slate-800" },
+            buttonText: "無（最後一步）",
+            requiresAction: false
+        }
+    ];
+
+    const relaySteps = [
+        {
+            instruction: "步驟 1：受害者發送 LLMNR 多播查詢。其尋找 shadowcat 主機以取得 SMB 資源，但在網域中未能得到 DNS 回應。",
+            pipe: "left-llmnr",
+            dir: "request",
+            tag: "LLMNR_BROADCAST",
+            proto: "LLMNR",
+            src: "受害者 (192.168.157.11)",
+            dst: "多播群組 (224.0.0.252)",
+            req: "LLMNR Multicast Query (Port 5355 UDP)\nQuery Target: shadowcat\nSender: 192.168.157.11",
+            res: "No response from Domain Controller.",
+            console: "[info] 監視網路環境，等待 LLMNR / NBT-NS 廣播封包...",
+            nodeUpdates: { victim: "border-sky-500", attacker: "border-sky-500", target: "border-slate-700" },
+            buttonText: "觸發毒化並接管流量",
+            requiresAction: true,
+            actionLabel: "確認 Responder SMB/HTTP 功能已關閉 (Off)",
+            actionFunc: function() {
+                addConsoleLine("[config] 檢查 Responder.conf: SMB=Off, HTTP=Off. 連接埠 445 已成功轉交給 ntlmrelayx.py 監聽");
+                document.getElementById('inspect-res').innerText = "Port 445 is released. ntlmrelayx.py is actively binding to 0.0.0.0:445";
+            }
+        },
+        {
+            instruction: "步驟 2：攻擊者發送 LLMNR 毒化。由 ntlmrelayx.py 接手此流程，將毒化後的單播回應送回受害者主機。",
+            pipe: "left-llmnr",
+            dir: "response",
+            tag: "LLMNR_POISON",
+            proto: "LLMNR",
+            src: "攻擊者 (192.168.157.50)",
+            dst: "受害者 (192.168.157.11)",
+            req: "Poison Response Packet\nTarget: shadowcat -> Destination IP: 192.168.157.50",
+            res: "Accepted. Preparing to send SMB credentials.",
+            console: "[poison] 發送毒化回應成功。受害者將嘗試與攻擊機建立 SMB 連線並傳遞憑證。",
+            nodeUpdates: { victim: "border-amber-500", attacker: "border-sky-500 shadow-lg", target: "border-slate-700" },
+            buttonText: "執行中繼驗證挑戰轉發",
+            requiresAction: false
+        },
+        {
+            instruction: "步驟 3：中繼驗證挑戰轉發。受害者建立對攻擊機的 SMB 請求，攻擊機立即將其轉向目標靶機，並由靶機產生驗證挑戰值，原封不動轉回受害者。",
+            pipe: "mid",
+            dir: "relay-flow",
+            tag: "RELAY_CHALLENGE",
+            proto: "SMB2",
+            src: "受害者 (192.168.157.11) → 攻擊者",
+            dst: "攻擊者 → 目標主機 (192.168.157.22)",
+            req: "Victim (Robb) -> Attacker (ntlmrelayx) -> Target (192.168.157.22)",
+            res: "Target Server Challenge (1122334455667788) -> Attacker -> Victim",
+            console: "[relay] 建立中繼關聯通道 192.168.157.11 <-> 192.168.157.50 <-> 192.168.157.22\n[relay] 挑戰值中繼回傳完成 (1122334455667788)",
+            nodeUpdates: { victim: "border-emerald-500", attacker: "border-emerald-500 shadow-xl", target: "border-emerald-500" },
+            buttonText: "執行認證封包中繼轉發",
+            requiresAction: false
+        },
+        {
+            instruction: "步驟 4：完成中繼驗證。受害者主機將加密後的 NetNTLMv2 響應傳送至攻擊機，攻擊機立刻將此身分憑證遞交給目標主機以取得系統特權。",
+            pipe: "mid-2",
+            dir: "relay-flow-back",
+            tag: "SMB_RELAY_SUCCESS",
+            proto: "SMB2",
+            src: "受害者 (192.168.157.11) → 攻擊者",
+            dst: "攻擊者 → 目標主機 (192.168.157.22)",
+            req: "Victim Response -> Attacker -> Target (User: EDDARD.STARK)\nAuthenticating via Relayed NetNTLMv2 Response",
+            res: "Target Response: STATUS_SUCCESS (Authentication Accepted)",
+            console: "[+] [SMB] 成功中繼來自 NORTH/EDDARD.STARK @ 192.168.157.11 的憑證連線至 192.168.157.22\n[+] EDDARD.STARK 在該主機上具有管理員 (Local Admin) 權限 (AdminStatus: TRUE)",
+            nodeUpdates: { victim: "border-emerald-500", attacker: "border-emerald-500 shadow-xl", target: "border-emerald-500 shadow-lg shadow-emerald-500/20" },
+            buttonText: "初始化本地 SOCKS5 代理服務",
+            requiresAction: false
+        },
+        {
+            instruction: "步驟 5：建立 SOCKS 代理。ntlmrelayx 在本地端 127.0.0.1:1080 啟用本機迴環代理。該代理安全持有管理員憑證權限，實際與目標主機維持一條 TCP 445 SMB 通訊會話。此過程無外部網路通訊。",
+            pipe: "none", // 本機迴環行為，無外部/實體物理管道流量動畫
+            dir: "none",
+            tag: "SOCKS_PROXY_INIT",
+            proto: "SOCKS5 (Local)",
+            src: "攻擊者本機 (127.0.0.1)",
+            dst: "本機迴環 (127.0.0.1:1080)",
+            req: "Initialize Local SOCKS5 Loopback Proxy (127.0.0.1:1080)\nRegistering credential mapping in Kali memory space",
+            res: "SOCKS server active. Current mapped session: [NORTH/EDDARD.STARK@192.168.157.22(445)]",
+            console: "[socks] 本地端迴環 SOCKS 伺服器已建立：socks5://127.0.0.1:1080\n[socks] 目標主機實體連線依然維持於 SMB (TCP 445)。輸入 `socks` 可檢視作用中的會話。",
+            nodeUpdates: { victim: "border-slate-700", attacker: "border-emerald-500 shadow-xl", target: "border-emerald-500 shadow-lg" },
+            buttonText: "建立 DCERPC samr 具名管道",
+            requiresAction: true,
+            actionLabel: "配置 /etc/proxychains4.conf 連接埠",
+            actionFunc: function() {
+                addConsoleLine("[config] 設定 proxychains4 本地代理轉向 socks5 127.0.0.1 1080");
+                document.getElementById('inspect-res').innerText = "Proxychains configuration synced: socks5 127.0.0.1 1080 (Mapped)";
+            }
+        },
+        {
+            instruction: "步驟 6：建立 samr 具名管道。利用 proxychains4 驅動 secretsdump.py，透過 SMB 協定（TCP 445）向目標主機發送建立 \\PIPE\\samr 具名管道的請求，完成來回會話協商。",
+            pipe: "right-smb", // 建立具名管道必須透過 SMB (TCP 445) 管道
+            dir: "round-trip", // 一次播放，一次來回
+            tag: "SMB_CREATE_PIPE",
+            proto: "SMB2",
+            src: "攻擊者 (192.168.157.50)",
+            dst: "目標主機 (192.168.157.22:445)",
+            req: "proxychains4 secretsdump.py -no-pass 'NORTH'/'EDDARD.STARK'@'192.168.157.22'\nSMB2 CREATE Request for Named Pipe: \\samr via IPC$ Share",
+            res: "SMB2 CREATE Response File: \\samr Success (Pipe Handle: 0x0001 Granted)",
+            console: "[socks] 執行 proxychains secretsdump.py -no-pass ...\n[detect] 透過 SMB (TCP 445) 成功與目標主機建立 \\PIPE\\samr 具名管道連線（DCERPC BIND 準備完成）。",
+            nodeUpdates: { victim: "border-slate-700", attacker: "border-indigo-500 shadow-xl", target: "border-indigo-500 shadow-lg shadow-indigo-500/20" },
+            buttonText: "以具名管道進行 SAM 傾印",
+            requiresAction: false
+        },
+        {
+            instruction: "步驟 7：遠端傾印雜湊憑證。secretsdump 透過已建立的 \\PIPE\\samr 具名管道，發送 DCERPC 請求，直接遠端查詢目標主機之 SAM 註冊表中的本機帳號 NTHash 並傾印輸出。",
+            pipe: "right-dcerpc", // 使用 DCERPC 具名管道做傾印
+            dir: "round-trip", // 一次播放，一次來回
+            tag: "SAM_DUMP_COMPLETE",
+            proto: "MS-RPC / SMB2",
+            src: "目標主機 (192.168.157.22)",
+            dst: "攻擊者 (192.168.157.50)",
+            req: "Extracting SAM registries via MS-RPC over \\PIPE\\samr ...\nCall: SamrQueryInformationUser()",
+            res: "Extracted Hashed Records Successfully. Transmitting Payload.",
+            console: "[+] 成功倒出本機帳號資訊：\nAdministrator:500:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::\nGuest:501:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::\n[info] 提取完成。關閉 DCERPC 具名管道與 SMB 連線，Session 安全釋放。",
+            nodeUpdates: { victim: "border-slate-800", attacker: "border-sky-500", target: "border-slate-800" },
+            buttonText: "無（最後一步）",
+            requiresAction: false
+        }
+    ];
+
+    let currentStep = 0;
+    let activeSteps = hashSteps;
+    let selectedMode = 'hash';
+
+    // UI 元件取得
+    const nextBtn = document.getElementById('next-btn');
+    const verifyBtn = document.getElementById('verify-btn');
+    const resetBtn = document.getElementById('reset-btn');
+    const stepCounter = document.getElementById('step-counter');
+    const instructionText = document.getElementById('instruction-text');
+    const inspectReq = document.getElementById('inspect-req');
+    const inspectRes = document.getElementById('inspect-res');
+    const consoleOutput = document.getElementById('console-output');
+    
+    // 協定、發送端、接收端與警告 UI 元素取得
+    const inspectProto = document.getElementById('inspect-proto');
+    const inspectSrc = document.getElementById('inspect-src');
+    const inspectDst = document.getElementById('inspect-dst');
+    const modeWarningBanner = document.getElementById('mode-warning-banner');
+
+    // 拓撲元素取得
+    const nodeVictim = document.getElementById('node-victim');
+    const nodeAttacker = document.getElementById('node-attacker');
+    const nodeTarget = document.getElementById('node-target');
+    const nodeTargetWrapper = document.getElementById('node-target-wrapper');
+    const pipeRelayBlock = document.getElementById('pipe-relay-block');
+    const modeHashBtn = document.getElementById('mode-hash-btn');
+    const modeRelayBtn = document.getElementById('mode-relay-btn');
+    const attackerModeTag = document.getElementById('attacker-mode-tag');
+
+    // 雙管道左側通道取得
+    const pipeLeftLlmnr = document.getElementById('pipe-left-llmnr');
+    const pipeLeftSmb = document.getElementById('pipe-left-smb');
+    
+    // 右側物理通道取得
+    const pipeRightSmb = document.getElementById('pipe-right-smb');
+    const pipeRightDcerpc = document.getElementById('pipe-right-dcerpc');
+
+    // 狀態文字標籤
+    const pipeLeftLlmnrStatus = document.getElementById('pipe-left-llmnr-status');
+    const pipeLeftSmbStatus = document.getElementById('pipe-left-smb-status');
+    const pipeRightSmbStatus = document.getElementById('pipe-right-smb-status');
+    const pipeRightDcerpcStatus = document.getElementById('pipe-right-dcerpc-status');
+
+    const victimStatus = document.getElementById('victim-status');
+    const targetStatus = document.getElementById('target-status');
+    const opnumTag = document.getElementById('opnum-tag');
+    const toolNameIndicator = document.getElementById('tool-name-indicator');
+
+    // 初始化狀態設定
+    function initApp() {
+        currentStep = 0;
+        updateUIForMode();
+        stepCounter.innerText = `STEP: 0/${activeSteps.length}`;
+        instructionText.innerText = "請選擇上方攻擊演示路徑，並點擊下方按鈕啟動多步流量分析模擬。";
+        inspectReq.innerText = "等待流程啟動...";
+        inspectRes.innerText = "等待接收端響應...";
+        
+        // 重置協定監聽面板
+        inspectProto.innerText = "N/A";
+        inspectSrc.innerText = "N/A";
+        inspectDst.innerText = "N/A";
+        modeWarningBanner.classList.add('hidden');
+
+        opnumTag.innerText = "INFO: INITIALIZED";
+        consoleOutput.innerHTML = `<div class="text-slate-600">[info] 系統已切換至「${selectedMode === 'hash' ? '僅獲取 Hash 模式' : 'NTLM 中繼轉發模式'}」。請開始您的模擬步驟。</div>`;
+        verifyBtn.classList.add('hidden');
+        nextBtn.innerHTML = `<span>啟動第一步模擬</span><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>`;
+        nextBtn.className = "w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-2.5 px-4 text-xs rounded flex items-center justify-center gap-2 transition-all transform active:scale-95 shadow";
+        nextBtn.disabled = false;
+
+        // 重置拓撲節點樣式
+        nodeVictim.className = "w-16 h-16 bg-slate-800 rounded-2xl flex items-center justify-center border-2 border-slate-600 shadow-lg";
+        nodeAttacker.className = "w-20 h-20 bg-slate-800 rounded-2xl flex items-center justify-center border-2 border-sky-500 shadow-lg shadow-sky-500/20";
+        nodeTarget.className = "w-16 h-16 bg-slate-800 rounded-2xl flex items-center justify-center border-2 border-slate-700 shadow-lg";
+        
+        pipeLeftLlmnr.className = "protocol-pipe rounded-full bg-slate-800";
+        pipeLeftSmb.className = "protocol-pipe rounded-full bg-slate-800";
+        pipeRightSmb.className = "protocol-pipe rounded-full bg-slate-800";
+        pipeRightDcerpc.className = "protocol-pipe rounded-full bg-slate-800";
+
+        pipeLeftLlmnrStatus.innerText = "IDLE";
+        pipeLeftLlmnrStatus.className = "text-slate-600 uppercase italic text-[9px]";
+        pipeLeftSmbStatus.innerText = "IDLE";
+        pipeLeftSmbStatus.className = "text-slate-600 uppercase italic text-[9px]";
+        
+        if (selectedMode === 'relay') {
+            pipeRightSmbStatus.innerText = "IDLE";
+            pipeRightSmbStatus.className = "text-slate-600 uppercase italic text-[9px]";
+            pipeRightDcerpcStatus.innerText = "CLOSED";
+            pipeRightDcerpcStatus.className = "text-slate-600 uppercase italic text-[9px]";
+            targetStatus.innerText = "狀態: 正常運行";
+            targetStatus.className = "text-[10px] terminal-font px-2 py-0.5 bg-slate-800 text-sky-400 rounded";
+        } else {
+            targetStatus.innerText = "狀態: 未連線";
+            targetStatus.className = "text-[10px] terminal-font px-2 py-0.5 bg-slate-800 text-slate-500 rounded";
+        }
+        victimStatus.innerText = "狀態: 正常運作";
+        victimStatus.className = "text-[10px] terminal-font px-2 py-0.5 bg-slate-800 text-sky-400 rounded";
+    }
+
+    // 根據模式切換顯示的元件
+    function updateUIForMode() {
+        if (selectedMode === 'hash') {
+            activeSteps = hashSteps;
+            pipeRelayBlock.classList.add('hidden');
+            nodeTargetWrapper.classList.add('opacity-30');
+            modeHashBtn.className = "px-3 py-1.5 text-xs font-semibold rounded border border-sky-500 bg-sky-900/40 text-sky-300 transition-all";
+            modeRelayBtn.className = "px-3 py-1.5 text-xs font-semibold rounded border border-slate-700 hover:border-slate-500 text-slate-400 transition-all";
+            attackerModeTag.innerText = "Responder 啟動中";
+            toolNameIndicator.innerText = "Responder (v3.1.1)";
+        } else {
+            activeSteps = relaySteps;
+            pipeRelayBlock.classList.remove('hidden');
+            nodeTargetWrapper.classList.remove('opacity-30');
+            modeHashBtn.className = "px-3 py-1.5 text-xs font-semibold rounded border border-slate-700 hover:border-slate-500 text-slate-400 transition-all";
+            modeRelayBtn.className = "px-3 py-1.5 text-xs font-semibold rounded border border-sky-500 bg-sky-900/40 text-sky-300 transition-all";
+            attackerModeTag.innerText = "ntlmrelayx 啟動中";
+            toolNameIndicator.innerText = "Impacket ntlmrelayx (v0.10.0)";
+        }
+    }
+
+    // 控制台印出日誌
+    function addConsoleLine(text) {
+        const lines = text.split('\n');
+        lines.forEach(t => {
+            const line = document.createElement('div');
+            line.className = 'console-line terminal-font text-sky-300';
+            
+            if (t.startsWith('[info]')) {
+                line.className = 'console-line terminal-font text-slate-400 text-[10px]';
+            } else if (t.startsWith('[poison]')) {
+                line.className = 'console-line terminal-font text-amber-400 font-semibold';
+            } else if (t.startsWith('[detect]')) {
+                line.className = 'console-line terminal-font text-indigo-400';
+            } else if (t.startsWith('[relay]')) {
+                line.className = 'console-line terminal-font text-cyan-400';
+            } else if (t.startsWith('[socks]')) {
+                line.className = 'console-line terminal-font text-purple-400';
+            } else if (t.startsWith('[+]')) {
+                line.className = 'console-line terminal-font text-green-400 font-bold';
+            }
+            
+            line.innerText = t;
+            consoleOutput.appendChild(line);
+            setTimeout(() => line.classList.add('visible'), 10);
+        });
+        consoleOutput.scrollTop = consoleOutput.scrollHeight;
+    }
+
+    // 取得指定管道的實體元素
+    function getPipeElement(pipeType) {
+        if (pipeType === 'left-llmnr') return pipeLeftLlmnr;
+        if (pipeType === 'left-smb') return pipeLeftSmb;
+        if (pipeType === 'right-smb') return pipeRightSmb;
+        if (pipeType === 'right-dcerpc') return pipeRightDcerpc;
+        return null;
+    }
+
+    // 動態傳輸封包 (優化實體通道綁定，合併 DCERPC 重疊邏輯，並整合來回傳輸)
+    function triggerPacket(pipeType, direction) {
+        if (pipeType === 'none' || !pipeType) return;
+
+        // 整合：當為 round-trip 模式時，同一按鈕下，一次點擊自動播放「去、回」完整來回動畫
+        if (direction === 'round-trip') {
+            const pipeEl = getPipeElement(pipeType);
+            if (!pipeEl) return;
+
+            // 1. 去程封包 (Request: 左往右)
+            const reqPacket = document.createElement('div');
+            reqPacket.className = `packet animate-transmit-right`;
+            pipeEl.appendChild(reqPacket);
+            
+            // 2. 回程封包 (Response: 右往左)
+            setTimeout(() => {
+                reqPacket.remove();
+                const resPacket = document.createElement('div');
+                resPacket.className = `packet animate-transmit-left`;
+                pipeEl.appendChild(resPacket);
+                setTimeout(() => resPacket.remove(), 1000);
+            }, 1000);
+            return;
+        }
+
+        const packet = document.createElement('div');
+        packet.className = `packet`;
+        
+        // 判定單向傳輸的動畫管道
+        if (pipeType === 'left-llmnr') {
+            packet.className += direction === 'request' ? ' animate-transmit-right' : ' animate-transmit-left';
+            pipeLeftLlmnr.appendChild(packet);
+        } else if (pipeType === 'left-smb') {
+            packet.className += direction === 'request' ? ' animate-transmit-right' : ' animate-transmit-left';
+            pipeLeftSmb.appendChild(packet);
+        } else if (pipeType === 'right-smb') {
+            packet.className += direction === 'request' ? ' animate-transmit-right' : ' animate-transmit-left';
+            pipeRightSmb.appendChild(packet);
+        } else if (pipeType === 'mid') {
+            // 中繼鏈路整合：受害者 -> 攻擊者 (由管道二 SMB 進行) -> 目標主機 (由管道三 SMB 中繼進行)
+            packet.className += direction === 'relay-flow' ? ' animate-transmit-lm' : ' animate-transmit-mtl';
+            pipeLeftSmb.appendChild(packet);
+            
+            setTimeout(() => {
+                const innerPacket = document.createElement('div');
+                innerPacket.className = 'packet';
+                innerPacket.className += direction === 'relay-flow' ? ' animate-transmit-mr' : ' animate-transmit-ml';
+                pipeRightSmb.appendChild(innerPacket);
+                setTimeout(() => innerPacket.remove(), 1000);
+            }, 400);
+		} else if (pipeType === 'mid-2') {
+            // 中繼鏈路整合：受害者 <- 攻擊者 (由管道二 SMB 進行) <- 目標主機 (由管道三 SMB 中繼進行)
+            // 修正為符合註解說明的右向左流向：先右側（Target -> Attacker），延遲後左側（Attacker -> Victim）
+            packet.className += direction === 'relay-flow' ? ' animate-transmit-mr' : ' animate-transmit-ml';
+            pipeRightSmb.appendChild(packet);
+            
+            setTimeout(() => {
+                const innerPacket = document.createElement('div');
+                innerPacket.className = 'packet';
+                innerPacket.className += direction === 'relay-flow' ? ' animate-transmit-lm' : ' animate-transmit-mtl';
+                pipeLeftSmb.appendChild(innerPacket);
+                setTimeout(() => innerPacket.remove(), 1000);
+            }, 400);
+        } else if (pipeType === 'right-dcerpc') {
+            packet.className += direction === 'request' ? ' animate-transmit-right' : ' animate-transmit-left';
+            pipeRightDcerpc.appendChild(packet);
+        }
+
+        setTimeout(() => packet.remove(), 1200);
+    }
+
+    // 當演示正在執行時，試圖切換模式會提示必須重置
+    function handleModeChangeAttempt() {
+        modeWarningBanner.classList.remove('hidden');
+        // 重置按鈕視覺提示震盪閃爍
+        resetBtn.classList.remove('border-slate-600');
+        resetBtn.classList.add('border-red-500', 'text-red-400', 'bg-red-950/20');
+        setTimeout(() => {
+            resetBtn.classList.remove('border-red-500', 'text-red-400', 'bg-red-950/20');
+            resetBtn.classList.add('border-slate-600');
+        }, 1200);
+    }
+
+    // 模式按鈕監聽
+    modeHashBtn.addEventListener('click', () => {
+        if (currentStep > 0) {
+            handleModeChangeAttempt();
+            return;
+        }
+        selectedMode = 'hash';
+        initApp();
+    });
+
+    // 模式按鈕監聽
+    modeRelayBtn.addEventListener('click', () => {
+        if (currentStep > 0) {
+            handleModeChangeAttempt();
+            return;
+        }
+        selectedMode = 'relay';
+        initApp();
+    });
+
+    // 執行下一步邏輯
+    nextBtn.addEventListener('click', () => {
+        if (currentStep >= activeSteps.length) return;
+
+        const step = activeSteps[currentStep];
+
+        // 判定該步驟是否需要手動決策/驗證動作
+        if (step.requiresAction) {
+            // 開啟決策比對按鈕，防呆並強迫互動
+            verifyBtn.classList.remove('hidden');
+            verifyBtn.innerText = step.actionLabel;
+            verifyBtn.onclick = function() {
+                step.actionFunc();
+                verifyBtn.classList.add('hidden');
+                // 完成手動動作後，解鎖並執行實質的封包傳遞
+                executeStepPayload(step);
+            };
+            instructionText.innerText = `此步驟需要人工判定！請點擊橘黃色的「${step.actionLabel}」按鈕來執行安全性檢查，再進行封包發送。`;
+            nextBtn.disabled = true;
+        } else {
+            executeStepPayload(step);
+        }
+    });
+
+    // 真正執行封包與數據顯化
+    function executeStepPayload(step) {
+        nextBtn.disabled = false;
+        
+        // 1. 發送封包動畫
+        triggerPacket(step.pipe, step.dir);
+        
+        // 2. 顯示發送端載荷、更新協定監聽與流向面板
+        inspectReq.innerText = step.req;
+        inspectRes.innerText = "驗證機制處理中，等待接收端狀態...";
+        
+        // 動態填充監聽面板的發送與接收詳細欄位
+        inspectProto.innerText = step.proto;
+        inspectSrc.innerText = step.src;
+        inspectDst.innerText = step.dst;
+
+        // 3. 延遲後呈現回應與控制台更新
+        setTimeout(() => {
+            inspectRes.innerText = step.res;
+            addConsoleLine(step.console);
+            
+            // STEP 計數器即時加 1，精準反映當前完成步驟與總步數
+            stepCounter.innerText = `STEP: ${currentStep + 1}/${activeSteps.length}`;
+            opnumTag.innerText = `INFO: ${step.tag}`;
+
+            // 狀態顏色動態設定
+            updateNodeVisuals(step.nodeUpdates);
+            updatePipeStatus(step.pipe, step.tag);
+
+            currentStep++;
+            
+            // 下一步按鈕文字與狀態
+            if (currentStep < activeSteps.length) {
+                const nextStepData = activeSteps[currentStep];
+                instructionText.innerText = nextStepData.instruction;
+                nextBtn.innerHTML = `<span>${nextStepData.buttonText}</span><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>`;
+            } else {
+                instructionText.innerText = "模擬演練流程已順利執行完畢。";
+                nextBtn.innerHTML = '<span>流程演練結束</span>';
+                nextBtn.className = "w-full bg-green-600 text-white font-bold py-2.5 px-4 text-xs rounded flex items-center justify-center gap-2 transition-all cursor-not-allowed shadow";
+                nextBtn.disabled = true;
+            }
+        }, 1100);
+    }
+
+    // 更新節點外觀樣式
+    function updateNodeVisuals(classes) {
+        if (!classes) return;
+        if (classes.victim) {
+            nodeVictim.className = `w-16 h-16 bg-slate-800 rounded-2xl flex items-center justify-center border-2 shadow-lg transition-all ${classes.victim}`;
+        }
+        if (classes.attacker) {
+            nodeAttacker.className = `w-20 h-20 bg-slate-800 rounded-2xl flex items-center justify-center border-2 shadow-lg transition-all ${classes.attacker}`;
+        }
+        if (classes.target) {
+            nodeTarget.className = `w-16 h-16 bg-slate-800 rounded-2xl flex items-center justify-center border-2 shadow-lg transition-all ${classes.target}`;
+        }
+    }
+
+    // 更新通道與協議狀態 (適配雙管道併合機制)
+    function updatePipeStatus(pipeType, tag) {
+        // 修正：如果為本機迴環，不點亮 any 實體物理連線管道
+        if (pipeType === 'none' || !pipeType) return;
+
+        if (pipeType === 'left-llmnr') {
+            pipeLeftLlmnrStatus.innerText = tag;
+            pipeLeftLlmnrStatus.className = "text-sky-400 font-bold uppercase tracking-wider text-[9px]";
+            pipeLeftLlmnr.className = "protocol-pipe rounded-full bg-sky-900/50 transition-all";
+        } else if (pipeType === 'left-smb') {
+            pipeLeftSmbStatus.innerText = tag;
+            pipeLeftSmbStatus.className = "text-emerald-400 font-bold uppercase tracking-wider text-[9px]";
+            pipeLeftSmb.className = "protocol-pipe rounded-full bg-emerald-900/50 transition-all";
+        } else if (pipeType === 'right-smb') {
+            pipeRightSmbStatus.innerText = tag;
+            pipeRightSmbStatus.className = "text-indigo-400 font-bold uppercase tracking-wider text-[9px]";
+            pipeRightSmb.className = "protocol-pipe rounded-full bg-indigo-900/50 transition-all";
+        } else if (pipeType === 'mid') {
+            pipeLeftSmbStatus.innerText = "RELAYING";
+            pipeLeftSmbStatus.className = "text-emerald-400 font-bold uppercase tracking-wider text-[9px]";
+            pipeLeftSmb.className = "protocol-pipe rounded-full bg-emerald-900/50 transition-all";
+            
+            pipeRightSmbStatus.innerText = tag;
+            pipeRightSmbStatus.className = "text-emerald-400 font-bold uppercase tracking-wider text-[9px]";
+            pipeRightSmb.className = "protocol-pipe rounded-full bg-emerald-900/50 transition-all";
+        } else if (pipeType === 'right-dcerpc') {
+            pipeRightDcerpcStatus.innerText = tag;
+            pipeRightDcerpcStatus.className = "text-purple-400 font-bold uppercase tracking-wider text-[9px]";
+            pipeRightDcerpc.className = "protocol-pipe rounded-full bg-purple-900/50 transition-all";
+        }
+    }
+
+    // 重置按鈕
+    resetBtn.addEventListener('click', () => {
+        initApp();
+    });
+
+    // 啟動載入
+    window.onload = function() {
+        initApp();
+    };
+</script>
+
+</body>
+</html>
