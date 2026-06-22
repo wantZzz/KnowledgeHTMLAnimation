@@ -1,0 +1,972 @@
+---
+layout: null
+title: "電子殼層與副殼層分布模擬器"
+description: "輔助理解電子在原子的殼層與副殼層分布與說明"
+role: "primary"
+related: []
+tags: ["顯示可能會卡"]
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>電子殼層與副殼層分布模擬器</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    body {
+      background-color: #0b0f19;
+      color: #f3f4f6;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: #111827;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #374151;
+      border-radius: 3px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: #4b5563;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col overflow-x-hidden">
+
+  <!-- 導覽列 -->
+  <header class="border-b border-gray-800 bg-gray-900 bg-opacity-50 backdrop-blur px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center space-x-3">
+      <div class="p-2 bg-indigo-600 bg-opacity-20 rounded-lg text-indigo-400">
+        <i data-lucide="atom" class="w-6 h-6"></i>
+      </div>
+      <div>
+        <h1 class="text-lg font-bold tracking-wider text-gray-100">量子電子軌域模擬器</h1>
+        <p class="text-xs text-gray-400">過渡金屬 3d 軌域填滿歷程與庫倫排斥力動態展示</p>
+      </div>
+    </div>
+    <div class="text-xs text-gray-400 border border-gray-800 rounded px-3 py-1 bg-gray-900">
+      當前狀態：支援 Z=1 至 Z=30 基態模擬
+    </div>
+  </header>
+
+  <!-- 主內容區 -->
+  <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 max-w-7xl mx-auto w-full">
+    
+    <!-- 左側控制與說明面板 (5/12 寬) -->
+    <div class="lg:col-span-5 flex flex-col space-y-6">
+      
+      <!-- 核心控制項 -->
+      <section class="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-indigo-400 mb-4 flex items-center gap-2">
+          <i data-lucide="sliders" class="w-4 h-4"></i> 互動控制面板
+        </h2>
+        
+        <div class="space-y-4">
+          <!-- 互動元素 1: 選擇原子 -->
+          <div>
+            <label for="atomSelect" class="block text-xs text-gray-400 mb-1">選擇目標原子（已擴增至 Z=30 鋅）</label>
+            <select id="atomSelect" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              <!-- JS 動態填入原子選項 (H 至 Zn) -->
+            </select>
+          </div>
+
+          <!-- 原子基本資訊摘要 -->
+          <div id="atomBrief" class="bg-gray-950 p-3 rounded-lg border border-gray-800 flex justify-between items-center text-xs">
+            <div>
+              <span class="text-gray-400">元素符號：</span><span id="briefSymbol" class="font-bold text-indigo-300">H</span>
+              <span class="mx-2 text-gray-600">|</span>
+              <span class="text-gray-400">原子序 (Z)：</span><span id="briefZ" class="font-bold text-indigo-300">1</span>
+            </div>
+            <div>
+              <span class="text-gray-400">電子數：</span><span id="briefElectrons" class="font-bold text-indigo-300">0 / 1</span>
+            </div>
+          </div>
+
+          <!-- 互動元素 2: 單步觸發控制 -->
+          <div class="grid grid-cols-2 gap-3">
+            <button id="stepBtn" class="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-800 disabled:text-gray-600 text-white font-medium py-2 px-4 rounded-lg text-sm transition-all shadow-md">
+              <i data-lucide="plus-circle" class="w-4 h-4"></i>
+              <span id="stepBtnText">配置下一個電子</span>
+            </button>
+            <button id="resetBtn" class="flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium py-2 px-4 rounded-lg text-sm transition-all border border-gray-700">
+              <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+              <span>重設狀態</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 逐步配置分析面板 -->
+      <section class="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg flex-1 flex flex-col min-h-[300px]">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-emerald-400 mb-3 flex items-center gap-2">
+          <i data-lucide="file-text" class="w-4 h-4"></i> 步驟說明與物理分析
+        </h2>
+        
+        <!-- 當前填入步驟 -->
+        <div id="stepDetails" class="flex-1 flex flex-col justify-between space-y-4">
+          <div class="bg-gray-950 p-4 rounded-lg border border-gray-800 flex-1 overflow-y-auto custom-scrollbar text-sm space-y-3">
+            <div id="stepTitle" class="font-bold text-gray-200 border-b border-gray-800 pb-2">
+              請點擊配置按鈕開始模擬
+            </div>
+            <div id="stepDescription" class="text-gray-400 leading-relaxed text-xs space-y-2">
+              <p>本系統將引導您觀察電子如何依據量子力學三大原理，逐一填入原子的殼層與副殼層中：</p>
+              <ul class="list-disc pl-4 space-y-1">
+                <li>遞建原理：電子優先進入能量最低的空軌域。</li>
+                <li>鮑利不相容原理：每個軌域最多容納兩個電子，且自旋方向必須相反。</li>
+                <li>洪德定則：同副殼層的多個簡併軌域，電子優先以相同自旋方向單獨佔據，最後才進行配對。</li>
+              </ul>
+              <p class="mt-2 text-amber-400 font-medium">物理機制：庫倫排斥力與立體動力學模擬</p>
+              <p>系統已升級微觀動力學模擬。s 副殼層電子以傾斜軌道進行 3D 繞圈，而 p、d 副殼層電子則在軌域軸向上進行穿透原子核的來回簡諧運動。每次來回時，其中一趟會從原子核背後的空間穿過，藉此呈現真實的立體空間動態。同副殼層電子會自動以特定相位差錯開，以模擬弱庫倫排斥力在空間中的推擠效應。</p>
+            </div>
+          </div>
+
+          <!-- 電子組態即時變化 -->
+          <div class="bg-gray-950 p-3 rounded-lg border border-gray-800 text-xs">
+            <div class="text-gray-500 mb-1">當前基態電子組態：</div>
+            <div id="configDisplay" class="font-mono text-sm text-yellow-400 tracking-wider">
+              未配置電子
+            </div>
+          </div>
+        </div>
+      </section>
+      
+    </div>
+
+    <!-- 右側動態模擬面板 (7/12 寬) -->
+    <div class="lg:col-span-7 flex flex-col space-y-6">
+      
+      <!-- 空間分布圖（軌域與殼層視覺化） -->
+      <section class="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg flex flex-col items-center">
+        <div class="w-full flex justify-between items-center mb-3">
+          <h2 class="text-sm font-semibold uppercase tracking-wider text-blue-400 flex items-center gap-2">
+            <i data-lucide="orbit" class="w-4 h-4"></i> 空間軌域、殼層分布與排斥力模擬
+          </h2>
+          <span class="text-2xs text-gray-500">n 代表主殼層，s, p, d 分別代表副殼層</span>
+        </div>
+        
+        <!-- 軌域 SVG 容器 -->
+        <div class="relative w-full max-w-[450px] aspect-square bg-gray-950 rounded-lg border border-gray-800 overflow-hidden flex items-center justify-center">
+          <svg id="orbitalSvg" class="w-full h-full" viewBox="0 0 400 400">
+            <!-- 靜態背景微粒層 -->
+            <g id="svgStars"></g>
+            <!-- 靜態殼層軌跡層 -->
+            <g id="svgShellTracks"></g>
+            <!-- 靜態副殼層輪廓層 -->
+            <g id="svgLobes"></g>
+            
+            <!-- 動態排斥力向量線層 (無文字、半透明) -->
+            <g id="svgRepulsion" opacity="1"></g>
+            <!-- 動態後方電子層 (在原子核下方) -->
+            <g id="svgBehindElectrons"></g>
+            
+            <!-- 靜態中心原子核層 -->
+            <g id="svgNucleus"></g>
+            
+            <!-- 動態前方電子層 (在原子核上方) -->
+            <g id="svgFrontElectrons"></g>
+          </svg>
+        </div>
+
+        <!-- 獨立的圖例說明區塊 (避免遮擋空間分布圖) -->
+        <div class="w-full max-w-[450px] mt-4 bg-gray-950 p-4 rounded-lg border border-gray-855 text-xs shadow-inner">
+          <h3 class="font-bold text-gray-300 mb-2 border-b border-gray-800 pb-1 flex items-center gap-2 text-2xs uppercase tracking-wider">
+            <i data-lucide="info" class="w-3.5 h-3.5 text-blue-400"></i> 粒子與動態交互作用圖例
+          </h3>
+          <div class="grid grid-cols-2 gap-4 text-2xs">
+            <div class="space-y-1.5">
+              <div class="flex items-center gap-2">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse"></span>
+                <span class="text-gray-400">s 副殼層電子 (3D 傾斜繞圈)</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span class="text-gray-400">p 副殼層電子 (軸向來回穿梭)</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+                <span class="text-gray-400">d 副殼層電子 (多向來回穿梭)</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-yellow-400 animate-ping"></span>
+                <span class="text-yellow-400 font-bold">最新配置電子 (高亮黃色)</span>
+              </div>
+            </div>
+            <div class="space-y-1.5 border-l border-gray-800 pl-4">
+              <div class="flex items-center gap-2">
+                <span class="inline-block w-4 h-0.5 border-t-2 border-dashed border-red-500 opacity-60"></span>
+                <span class="text-red-400 font-semibold text-3xs">強庫倫排斥力 (僅限當前活動副殼層)</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="inline-block w-4 h-0.5 border-t-2 border-dotted border-orange-400 opacity-40"></span>
+                <span class="text-orange-400 font-semibold text-3xs">弱庫倫排斥力 (僅限當前活動副殼層)</span>
+              </div>
+              <div class="flex items-center gap-2 text-gray-500 text-3xs">
+                <i data-lucide="arrow-up-down" class="w-3 h-3 text-indigo-400"></i>
+                <span>物理自旋方向指標 (↑ / ↓)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 能階分布與填充狀態（Aufbau Diagram） -->
+      <section class="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-pink-400 mb-3 flex items-center gap-2">
+          <i data-lucide="bar-chart-2" class="w-4 h-4"></i> 能階填充狀態 (Aufbau 能階梯)
+        </h2>
+        
+        <!-- 能階排布容器 -->
+        <div class="bg-gray-950 p-4 rounded-lg border border-gray-800 min-h-[160px] flex flex-col justify-between space-y-2">
+          <!-- 4s / 3d -->
+          <div class="flex items-center text-xs">
+            <span class="w-10 text-gray-500 font-mono">n=4/3</span>
+            <div class="flex-1 grid grid-cols-6 gap-2">
+              <!-- 4s -->
+              <div class="col-span-1 border border-gray-800 bg-gray-900 rounded p-1 flex flex-col items-center">
+                <span class="text-3xs text-gray-500 font-bold">4s</span>
+                <div id="box-4s" class="flex gap-1 justify-center items-center h-6 w-full bg-gray-950 rounded border border-gray-800 mt-1"></div>
+              </div>
+              <!-- 3d -->
+              <div class="col-span-5 border border-gray-800 bg-gray-900 rounded p-1 flex flex-col items-center">
+                <span class="text-3xs text-gray-500 font-bold">3d (過渡金屬填充區)</span>
+                <div class="flex w-full gap-1 mt-1">
+                  <div id="box-3d-1" class="flex-1 flex justify-center items-center h-6 bg-gray-950 rounded border border-gray-800"></div>
+                  <div id="box-3d-2" class="flex-1 flex justify-center items-center h-6 bg-gray-950 rounded border border-gray-800"></div>
+                  <div id="box-3d-3" class="flex-1 flex justify-center items-center h-6 bg-gray-950 rounded border border-gray-800"></div>
+                  <div id="box-3d-4" class="flex-1 flex justify-center items-center h-6 bg-gray-950 rounded border border-gray-800"></div>
+                  <div id="box-3d-5" class="flex-1 flex justify-center items-center h-6 bg-gray-950 rounded border border-gray-800"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- 3s / 3p -->
+          <div class="flex items-center text-xs">
+            <span class="w-10 text-gray-500 font-mono">n=3</span>
+            <div class="flex-1 grid grid-cols-6 gap-2">
+              <!-- 3s -->
+              <div class="col-span-1 border border-gray-800 bg-gray-900 rounded p-1 flex flex-col items-center">
+                <span class="text-3xs text-gray-500 font-bold">3s</span>
+                <div id="box-3s" class="flex gap-1 justify-center items-center h-6 w-full bg-gray-950 rounded border border-gray-800 mt-1"></div>
+              </div>
+              <!-- 3p -->
+              <div class="col-span-5 border border-gray-800 bg-gray-900 rounded p-1 flex flex-col items-center">
+                <span class="text-3xs text-gray-500 font-bold">3p</span>
+                <div class="flex w-full gap-1 mt-1">
+                  <div id="box-3p-1" class="flex-1 flex justify-center items-center h-6 bg-gray-950 rounded border border-gray-800"></div>
+                  <div id="box-3p-2" class="flex-1 flex justify-center items-center h-6 bg-gray-950 rounded border border-gray-800"></div>
+                  <div id="box-3p-3" class="flex-1 flex justify-center items-center h-6 bg-gray-950 rounded border border-gray-800"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- 2s / 2p -->
+          <div class="flex items-center text-xs">
+            <span class="w-10 text-gray-500 font-mono">n=2</span>
+            <div class="flex-1 grid grid-cols-6 gap-2">
+              <!-- 2s -->
+              <div class="col-span-1 border border-gray-800 bg-gray-900 rounded p-1 flex flex-col items-center">
+                <span class="text-3xs text-gray-500 font-bold">2s</span>
+                <div id="box-2s" class="flex gap-1 justify-center items-center h-6 w-full bg-gray-950 rounded border border-gray-800 mt-1"></div>
+              </div>
+              <!-- 2p -->
+              <div class="col-span-5 border border-gray-800 bg-gray-900 rounded p-1 flex flex-col items-center">
+                <span class="text-3xs text-gray-500 font-bold">2p</span>
+                <div class="flex w-full gap-1 mt-1">
+                  <div id="box-2p-1" class="flex-1 flex justify-center items-center h-6 bg-gray-950 rounded border border-gray-800"></div>
+                  <div id="box-2p-2" class="flex-1 flex justify-center items-center h-6 bg-gray-950 rounded border border-gray-800"></div>
+                  <div id="box-2p-3" class="flex-1 flex justify-center items-center h-6 bg-gray-950 rounded border border-gray-800"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- 1s -->
+          <div class="flex items-center text-xs">
+            <span class="w-10 text-gray-500 font-mono">n=1</span>
+            <div class="flex-1 grid grid-cols-6 gap-2">
+              <!-- 1s -->
+              <div class="col-span-1 border border-gray-800 bg-gray-900 rounded p-1 flex flex-col items-center">
+                <span class="text-3xs text-gray-500 font-bold">1s</span>
+                <div id="box-1s" class="flex gap-1 justify-center items-center h-6 w-full bg-gray-950 rounded border border-gray-800 mt-1"></div>
+              </div>
+              <div class="col-span-5 flex items-center justify-center text-2xs text-gray-600 italic">
+                能量最低基底能階
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- 頁尾 -->
+  <footer class="border-t border-gray-800 bg-gray-950 text-center py-4 text-xs text-gray-500">
+    <p>量子電子軌域模擬系統 - 電子排列規則：遞建原理、鮑利不相容原理、洪德定則</p>
+  </footer>
+
+  <script>
+    // 初始化 Lucide 圖示
+    lucide.createIcons();
+
+    // 元素週期表前 30 個元素資料庫
+    const ATOMS = [
+      { z: 1,  symbol: "H",  name: "氫", config: ["1s1"] },
+      { z: 2,  symbol: "He", name: "氦", config: ["1s2"] },
+      { z: 3,  symbol: "Li", name: "鋰", config: ["1s2", "2s1"] },
+      { z: 4,  symbol: "Be", name: "鈹", config: ["1s2", "2s2"] },
+      { z: 5,  symbol: "B",  name: "硼", config: ["1s2", "2s2", "2p1"] },
+      { z: 6,  symbol: "C",  name: "碳", config: ["1s2", "2s2", "2p2"] },
+      { z: 7,  symbol: "N",  name: "氮", config: ["1s2", "2s2", "2p3"] },
+      { z: 8,  symbol: "O",  name: "氧", config: ["1s2", "2s2", "2p4"] },
+      { z: 9,  symbol: "F",  name: "氟", config: ["1s2", "2s2", "2p5"] },
+      { z: 10, symbol: "Ne", name: "氖", config: ["1s2", "2s2", "2p6"] },
+      { z: 11, symbol: "Na", name: "鈉", config: ["1s2", "2s2", "2p6", "3s1"] },
+      { z: 12, symbol: "Mg", name: "鎂", config: ["1s2", "2s2", "2p6", "3s2"] },
+      { z: 13, symbol: "Al", name: "鋁", config: ["1s2", "2s2", "2p6", "3s2", "3p1"] },
+      { z: 14, symbol: "Si", name: "矽", config: ["1s2", "2s2", "2p6", "3s2", "3p2"] },
+      { z: 15, symbol: "P",  name: "磷", config: ["1s2", "2s2", "2p6", "3s2", "3p3"] },
+      { z: 16, symbol: "S",  name: "硫", config: ["1s2", "2s2", "2p6", "3s2", "3p4"] },
+      { z: 17, symbol: "Cl", name: "氯", config: ["1s2", "2s2", "2p6", "3s2", "3p5"] },
+      { z: 18, symbol: "Ar", name: "氬", config: ["1s2", "2s2", "2p6", "3s2", "3p6"] },
+      { z: 19, symbol: "K",  name: "鉀", config: ["1s2", "2s2", "2p6", "3s2", "3p6", "4s1"] },
+      { z: 20, symbol: "Ca", name: "鈣", config: ["1s2", "2s2", "2p6", "3s2", "3p6", "4s2"] },
+      { z: 21, symbol: "Sc", name: "鈧", config: ["1s2", "2s2", "2p6", "3s2", "3p6", "4s2", "3d1"] },
+      { z: 22, symbol: "Ti", name: "鈦", config: ["1s2", "2s2", "2p6", "3s2", "3p6", "4s2", "3d2"] },
+      { z: 23, symbol: "V",  name: "釩", config: ["1s2", "2s2", "2p6", "3s2", "3p6", "4s2", "3d3"] },
+      { z: 24, symbol: "Cr", name: "鉻", config: ["1s2", "2s2", "2p6", "3s2", "3p6", "4s1", "3d5"], note: "半滿穩定效應" },
+      { z: 25, symbol: "Mn", name: "錳", config: ["1s2", "2s2", "2p6", "3s2", "3p6", "4s2", "3d5"] },
+      { z: 26, symbol: "Fe", name: "鐵", config: ["1s2", "2s2", "2p6", "3s2", "3p6", "4s2", "3d6"] },
+      { z: 27, symbol: "Co", name: "鈷", config: ["1s2", "2s2", "2p6", "3s2", "3p6", "4s2", "3d7"] },
+      { z: 28, symbol: "Ni", name: "鎳", config: ["1s2", "2s2", "2p6", "3s2", "3p6", "4s2", "3d8"] },
+      { z: 29, symbol: "Cu", name: "銅", config: ["1s2", "2s2", "2p6", "3s2", "3p6", "4s1", "3d10"], note: "全滿穩定效應" },
+      { z: 30, symbol: "Zn", name: "鋅", config: ["1s2", "2s2", "2p6", "3s2", "3p6", "4s2", "3d10"] }
+    ];
+
+    // 能階填充序列
+    const ORBITAL_SEQUENCE = [
+      { id: "1s", shell: 1, type: "s", capacity: 2, subshellIndex: 0, boxes: ["1s"] },
+      { id: "2s", shell: 2, type: "s", capacity: 2, subshellIndex: 0, boxes: ["2s"] },
+      { id: "2p", shell: 2, type: "p", capacity: 6, subshellIndex: 1, boxes: ["2p-1", "2p-2", "2p-3"] },
+      { id: "3s", shell: 3, type: "s", capacity: 2, subshellIndex: 0, boxes: ["3s"] },
+      { id: "3p", shell: 3, type: "p", capacity: 6, subshellIndex: 1, boxes: ["3p-1", "3p-2", "3p-3"] },
+      { id: "4s", shell: 4, type: "s", capacity: 2, subshellIndex: 0, boxes: ["4s"] },
+      { id: "3d", shell: 3, type: "d", capacity: 10, subshellIndex: 2, boxes: ["3d-1", "3d-2", "3d-3", "3d-4", "3d-5"] }
+    ];
+
+    // 定義主殼層半徑
+    const SHELL_RADII = {
+      1: 50,
+      2: 95,
+      3: 140,
+      4: 175
+    };
+
+    // 全域模擬狀態
+    let currentAtomIndex = 0;
+    let currentElectronCount = 0;
+    let electronsList = []; 
+
+    // DOM 元素快取
+    const atomSelect = document.getElementById("atomSelect");
+    const briefSymbol = document.getElementById("briefSymbol");
+    const briefZ = document.getElementById("briefZ");
+    const briefElectrons = document.getElementById("briefElectrons");
+    const stepBtn = document.getElementById("stepBtn");
+    const stepBtnText = document.getElementById("stepBtnText");
+    const resetBtn = document.getElementById("resetBtn");
+    const stepTitle = document.getElementById("stepTitle");
+    const stepDescription = document.getElementById("stepDescription");
+    const configDisplay = document.getElementById("configDisplay");
+    
+    // SVG 分層
+    const svgStars = document.getElementById("svgStars");
+    const svgShellTracks = document.getElementById("svgShellTracks");
+    const svgLobes = document.getElementById("svgLobes");
+    const svgRepulsion = document.getElementById("svgRepulsion");
+    const svgBehindElectrons = document.getElementById("svgBehindElectrons");
+    const svgNucleus = document.getElementById("svgNucleus");
+    const svgFrontElectrons = document.getElementById("svgFrontElectrons");
+
+    // 建立原子下拉選單
+    function initAtomSelect() {
+      ATOMS.forEach((atom, index) => {
+        const option = document.createElement("option");
+        option.value = index;
+        option.textContent = `${atom.z}. ${atom.name} (${atom.symbol})`;
+        atomSelect.appendChild(option);
+      });
+    }
+
+    // 重設狀態
+    function resetSimulation() {
+      currentElectronCount = 0;
+      electronsList = [];
+      updateUI();
+      setupStaticSVG();
+    }
+
+    // 計算當前電子基態分配
+    function calculateElectronPlacement(targetCount) {
+      const atom = ATOMS[currentAtomIndex];
+      const isCr = atom.symbol === "Cr" && targetCount === 24;
+      const isCu = atom.symbol === "Cu" && targetCount === 29;
+      
+      let remaining = targetCount;
+      const list = [];
+
+      for (let orbSeq of ORBITAL_SEQUENCE) {
+        if (remaining <= 0) break;
+
+        let spaceForThisOrbital = Math.min(remaining, orbSeq.capacity);
+        
+        if (isCr) {
+          if (orbSeq.id === "4s") spaceForThisOrbital = 1;
+          else if (orbSeq.id === "3d") spaceForThisOrbital = 5;
+        }
+        if (isCu) {
+          if (orbSeq.id === "4s") spaceForThisOrbital = 1;
+          else if (orbSeq.id === "3d") spaceForThisOrbital = 10;
+        }
+
+        remaining -= spaceForThisOrbital;
+
+        if (orbSeq.type === "s") {
+          for (let i = 0; i < spaceForThisOrbital; i++) {
+            list.push({
+              orbitalId: orbSeq.id,
+              shell: orbSeq.shell,
+              type: orbSeq.type,
+              boxId: orbSeq.boxes[0],
+              spin: i === 0 ? "up" : "down"
+            });
+          }
+        } 
+        else if (orbSeq.type === "p") {
+          const numBoxes = orbSeq.boxes.length;
+          for (let i = 0; i < spaceForThisOrbital; i++) {
+            let boxIndex;
+            let spin;
+            if (i < numBoxes) {
+              boxIndex = i;
+              spin = "up";
+            } else {
+              boxIndex = i - numBoxes;
+              spin = "down";
+            }
+            list.push({
+              orbitalId: orbSeq.id,
+              shell: orbSeq.shell,
+              type: orbSeq.type,
+              boxId: orbSeq.boxes[boxIndex],
+              spin: spin
+            });
+          }
+        }
+        else if (orbSeq.type === "d") {
+          const numBoxes = orbSeq.boxes.length;
+          for (let i = 0; i < spaceForThisOrbital; i++) {
+            let boxIndex;
+            let spin;
+            if (i < numBoxes) {
+              boxIndex = i;
+              spin = "up";
+            } else {
+              boxIndex = i - numBoxes;
+              spin = "down";
+            }
+            list.push({
+              orbitalId: orbSeq.id,
+              shell: orbSeq.shell,
+              type: orbSeq.type,
+              boxId: orbSeq.boxes[boxIndex],
+              spin: spin
+            });
+          }
+        }
+      }
+      return list;
+    }
+
+    // 電子組態文字
+    function generateConfigurationString(list) {
+      if (list.length === 0) return "未配置電子";
+      
+      const counts = {};
+      list.forEach(e => {
+        counts[e.orbitalId] = (counts[e.orbitalId] || 0) + 1;
+      });
+
+      const order = ["1s", "2s", "2p", "3s", "3p", "4s", "3d"];
+      const superscripts = {
+        '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', 
+        '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹', '10': '¹⁰'
+      };
+
+      return order
+        .filter(id => counts[id])
+        .map(id => `${id}${superscripts[counts[id]] || counts[id]}`)
+        .join(" ");
+    }
+
+    // 更新介面
+    function updateUI() {
+      const atom = ATOMS[currentAtomIndex];
+      briefSymbol.textContent = atom.symbol;
+      briefZ.textContent = atom.z;
+      briefElectrons.textContent = `${currentElectronCount} / ${atom.z}`;
+
+      if (currentElectronCount >= atom.z) {
+        stepBtn.disabled = true;
+        stepBtnText.textContent = "已完成配置";
+      } else {
+        stepBtn.disabled = false;
+        stepBtnText.textContent = `配置第 ${currentElectronCount + 1} 個電子`;
+      }
+
+      electronsList = calculateElectronPlacement(currentElectronCount);
+      configDisplay.textContent = generateConfigurationString(electronsList);
+
+      updateStepExplanation();
+      renderAufbauDiagram();
+    }
+
+    // 物理學說明文字
+    function updateStepExplanation() {
+      if (currentElectronCount === 0) {
+        stepTitle.textContent = "準備開始配置電子";
+        stepDescription.innerHTML = `
+          <p>已選擇 <strong>${ATOMS[currentAtomIndex].name}</strong> 原子，原子序 Z = ${ATOMS[currentAtomIndex].z}，基態下共有 ${ATOMS[currentAtomIndex].z} 個電子。</p>
+          <p class="mt-2 text-gray-500">請點擊上方「配置下一個電子」按鈕，模擬電子如何依序填入軌域。</p>
+        `;
+        return;
+      }
+
+      const currentElectron = electronsList[currentElectronCount - 1];
+      const atom = ATOMS[currentAtomIndex];
+      const name = atom.name;
+      const index = currentElectronCount;
+
+      stepTitle.textContent = `配置步驟：第 ${index} 個電子`;
+
+      let physicsExplain = "";
+      
+      if (currentElectron.orbitalId === "1s") {
+        physicsExplain = "第一殼層 (n = 1) 只有能量最低的 s 副殼層 (l = 0)。當兩個電子皆進入 1s 軌域時，兩電子因電荷相同而在空間中產生強烈的庫倫排斥力。鮑利不相容原理規定其自旋必須相反，以形成配對，降低體系能量。";
+      } else if (currentElectron.orbitalId === "2s") {
+        physicsExplain = "第一殼層已填滿。根據遞建原理，電子跨入第二殼層 (n = 2)，優先填入該層能量最低的 2s 副殼層。";
+      } else if (currentElectron.orbitalId === "2p") {
+        const pElectrons = electronsList.filter(e => e.orbitalId === "2p");
+        const countInP = pElectrons.length;
+        if (countInP <= 3) {
+          physicsExplain = `進入 2p 副殼層。根據洪德定則，為了將「電子間的庫倫排斥力」降到最低，電子會優先單獨佔據三個相互垂直的 px、py、pz 軌域，且保持自旋方向平行（朝上）。此時電子間距離最大，體系最穩定。`;
+        } else {
+          physicsExplain = `2p 副殼層的三個軌域已被電子單獨佔據。由於沒有多餘空軌域，新電子必須與現有電子配對。此時兩個電子被限制在同一個軌域空間內，產生了明顯的「同軌域強庫倫排斥力」（如圖中紅色虛線所示）。`;
+        }
+      } else if (currentElectron.orbitalId === "3s") {
+        physicsExplain = "第二殼層的 8 個電子位已全數填滿。新電子必須進入第三殼層 (n = 3) 的 3s 軌域。";
+      } else if (currentElectron.orbitalId === "3p") {
+        const pElectrons = electronsList.filter(e => e.orbitalId === "3p");
+        const countInP = pElectrons.length;
+        if (countInP <= 3) {
+          physicsExplain = `進入 3p 副殼層。電子依循洪德定則，分開填入三個不同的簡併軌域以避開彼此，這能有效減少空間中的電子排斥作用。`;
+        } else {
+          physicsExplain = `3p 副殼層開始進行電子配對。新電子與原軌域中的電子自旋相反配對，同軌域強庫倫排斥力使配對能高於單獨佔據能。`;
+        }
+      } else if (currentElectron.orbitalId === "4s") {
+        physicsExplain = "<strong>能量交錯現象：</strong>4s 軌域 (n = 4, l = 0) 的電子雲穿透力較強，使得其平均能量略低於 3d 軌域 (n = 3, l = 2)。因此，電子會先填滿 4s 軌域，才回頭填入 3d 軌域。";
+      } else if (currentElectron.orbitalId === "3d") {
+        const dElectrons = electronsList.filter(e => e.orbitalId === "3d");
+        const countInD = dElectrons.length;
+        
+        if (atom.symbol === "Cr" && index === 24) {
+          physicsExplain = "<strong>半滿穩定效應 (鉻 Cr 的特例)：</strong>此時原應填入 4s 的一個電子被吸收到 3d 中，形成 4s¹ 3d⁵ 組態。這是因為 3d 副殼層達到半滿時，五個電子各佔一格且自旋平行，此對稱分布使庫倫排斥力均勻且交換能極大化，體系能量反而低於 4s² 3d⁴。";
+        } else if (atom.symbol === "Cu" && index === 29) {
+          physicsExplain = "<strong>全滿穩定效應 (銅 Cu 的特例)：</strong>電子組態為 4s¹ 3d¹⁰。因為 3d 副殼層完全填滿（達到十個電子）呈現高度對稱的球形電荷分布，其體系能量顯著低於不完全填滿的 4s² 3d⁹，因全滿狀態具有極高的靜電穩定性。";
+        } else if (countInD <= 5) {
+          physicsExplain = `電子進入第三殼層的 3d 副殼層 (n = 3, l = 2)。3d 包含五個簡併軌域，形狀為多瓣形。新填入的電子優先以相同的自旋方向單獨佔據各個軌域，同副殼層間存在較弱的空間排斥（橘色虛線），推動電子均勻散開。`;
+        } else {
+          physicsExplain = `3d 副殼層已呈半滿狀態，後續填入的電子必須進入已佔有的軌域進行配對。同軌域電子間距離極近，會受到強烈的庫倫靜電排斥力作用（紅色虛線方向）。`;
+        }
+      }
+
+      stepDescription.innerHTML = `
+        <div class="space-y-2">
+          <div><span class="text-indigo-400">當前配置目標：</span><span class="font-bold text-gray-200">${currentElectron.orbitalId} 軌域</span></div>
+          <div><span class="text-indigo-400">量子數狀態：</span>主量子數 n = ${currentElectron.shell}，角量子數 l = ${getLValue(currentElectron.type)}</div>
+          <div><span class="text-indigo-400">自旋方向：</span>${currentElectron.spin === "up" ? "自旋朝上 (↑)" : "自旋朝下 (↓)"}</div>
+          <div class="border-t border-gray-800 pt-2 mt-2 text-gray-300 text-xs leading-relaxed">
+            ${physicsExplain}
+          </div>
+        </div>
+      `;
+    }
+
+    function getLValue(type) {
+      if (type === "s") return "0 (s)";
+      if (type === "p") return "1 (p)";
+      if (type === "d") return "2 (d)";
+      return "3 (f)";
+    }
+
+    // 渲染 Aufbau 能階圖上的自旋箭頭
+    function renderAufbauDiagram() {
+      const allBoxIds = [
+        "1s", "2s", "2p-1", "2p-2", "2p-3", "3s", "3p-1", "3p-2", "3p-3", "4s",
+        "3d-1", "3d-2", "3d-3", "3d-4", "3d-5"
+      ];
+      
+      allBoxIds.forEach(id => {
+        const el = document.getElementById(`box-${id}`);
+        if (el) el.innerHTML = "";
+      });
+
+      electronsList.forEach(e => {
+        const box = document.getElementById(`box-${e.boxId}`);
+        if (box) {
+          const arrowSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          arrowSvg.setAttribute("class", "w-3 h-5 text-gray-200");
+          arrowSvg.setAttribute("viewBox", "0 0 10 20");
+          
+          if (e.spin === "up") {
+            arrowSvg.innerHTML = `<path d="M5 2 L5 18 M5 2 L2 6 M5 2 L8 6" stroke="currentColor" stroke-width="1.5" fill="none" />`;
+            arrowSvg.classList.add("text-indigo-400");
+          } else {
+            arrowSvg.innerHTML = `<path d="M5 18 L5 2 M5 18 L2 14 M5 18 L8 14" stroke="currentColor" stroke-width="1.5" fill="none" />`;
+            arrowSvg.classList.add("text-pink-400");
+          }
+          box.appendChild(arrowSvg);
+        }
+      });
+    }
+
+    // ----------------------------------------------------
+    // 初始化與繪製靜態部分
+    // ----------------------------------------------------
+    function setupStaticSVG() {
+      const cx = 200;
+      const cy = 200;
+
+      // 1. 背景粒子
+      svgStars.innerHTML = `
+        <circle cx="${cx}" cy="${cy}" r="3" fill="#ffffff" opacity="0.1" />
+        <circle cx="50" cy="80" r="1.5" fill="#ffffff" opacity="0.15" />
+        <circle cx="320" cy="120" r="1" fill="#ffffff" opacity="0.2" />
+        <circle cx="100" cy="310" r="2" fill="#ffffff" opacity="0.1" />
+        <circle cx="280" cy="330" r="1.5" fill="#ffffff" opacity="0.25" />
+      `;
+
+      // 2. 主殼層軌跡 (n = 1, 2, 3, 4)
+      let tracksHtml = "";
+      Object.keys(SHELL_RADII).forEach(n => {
+        const r = SHELL_RADII[n];
+        tracksHtml += `
+          <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#1e293b" stroke-width="1.5" />
+          <text x="${cx + r}" y="${cy - 5}" font-size="8" fill="#475569" font-family="monospace">n=${n}</text>
+        `;
+      });
+      svgShellTracks.innerHTML = tracksHtml;
+
+      // 3. 中心原子核
+      svgNucleus.innerHTML = `
+        <defs>
+          <radialGradient id="nucleusGrad" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#a5b4fc" />
+            <stop offset="70%" stop-color="#4f46e5" />
+            <stop offset="100%" stop-color="#1e1b4b" />
+          </radialGradient>
+          <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+          </filter>
+        </defs>
+        <circle cx="${cx}" cy="${cy}" r="16" fill="url(#nucleusGrad)" />
+        <text x="${cx}" y="${cy + 4}" font-size="9" font-weight="bold" fill="#ffffff" text-anchor="middle">Z=${ATOMS[currentAtomIndex].z}</text>
+      `;
+
+      // 4. 動態顯示有電子的副殼層幾何輪廓 (p 軌域與 d 軌域)
+      const activeOrbitals = new Set(electronsList.map(e => e.orbitalId));
+      let lobesHtml = "";
+
+      if (activeOrbitals.has("2p")) {
+        lobesHtml += drawLobes(cx, cy, SHELL_RADII[2], "p", "#10b981");
+      }
+      if (activeOrbitals.has("3p")) {
+        lobesHtml += drawLobes(cx, cy, SHELL_RADII[3], "p", "#059669");
+      }
+      if (activeOrbitals.has("3d")) {
+        lobesHtml += drawLobes(cx, cy, SHELL_RADII[3], "d", "#d97706");
+      }
+      svgLobes.innerHTML = lobesHtml;
+    }
+
+    // 輔支繪製 lobes 輪廓
+    function drawLobes(cx, cy, r, type, color) {
+      let lobesSvg = "";
+      if (type === "p") {
+        const angles = [0, 90, 45];
+        angles.forEach(angle => {
+          lobesSvg += `
+            <g transform="rotate(${angle}, ${cx}, ${cy})" opacity="0.06">
+              <ellipse cx="${cx - r/1.5}" cy="${cy}" rx="${r/3}" ry="${r/5}" fill="${color}" stroke="${color}" stroke-dasharray="3,3" />
+              <ellipse cx="${cx + r/1.5}" cy="${cy}" rx="${r/3}" ry="${r/5}" fill="${color}" stroke="${color}" stroke-dasharray="3,3" />
+            </g>
+          `;
+        });
+      } 
+      else if (type === "d") {
+        for (let i = 0; i < 5; i++) {
+          const angle = i * 72;
+          lobesSvg += `
+            <g transform="rotate(${angle}, ${cx}, ${cy})" opacity="0.05">
+              <ellipse cx="${cx - r/1.5}" cy="${cy}" rx="${r/4}" ry="${r/7}" fill="${color}" stroke="${color}" stroke-dasharray="2,2" />
+              <ellipse cx="${cx + r/1.5}" cy="${cy}" rx="${r/4}" ry="${r/7}" fill="${color}" stroke="${color}" stroke-dasharray="2,2" />
+            </g>
+          `;
+        }
+      }
+      return lobesSvg;
+    }
+
+    // ----------------------------------------------------
+    // 高流暢動畫渲染引擎 (每幀更新)
+    // ----------------------------------------------------
+    function updateDynamicSVG(t) {
+      const cx = 200;
+      const cy = 200;
+
+      // 清空動態渲染層
+      svgRepulsion.innerHTML = "";
+      svgBehindElectrons.innerHTML = "";
+      svgFrontElectrons.innerHTML = "";
+
+      const activeCoords = [];
+
+      // 當前活動的軌域 ID（最後一個配置電子的軌域）
+      const activeOrbitalId = electronsList.length > 0 ? electronsList[electronsList.length - 1].orbitalId : null;
+
+      // 1. 計算每個電子的當前實時坐標點 (x, y, z)
+      electronsList.forEach((e, idx) => {
+        const shellNum = e.shell;
+        const r = SHELL_RADII[shellNum];
+        const type = e.type;
+
+        // 微觀運動速率 (內層快、外層慢)
+        const speed = 2.5 / Math.sqrt(shellNum); 
+        
+        let x, y, z;
+        let color = "#6366f1"; // 預設 s 副殼層
+
+        if (type === "s") {
+          // s 副殼層：3D 傾斜橢圓繞圓軌道
+          const tiltAngle = (shellNum * 45) * Math.PI / 180; // 軌道偏斜角
+          const phaseOffset = e.spin === "up" ? 0 : Math.PI; // 配對電子相位相反
+          
+          const angle = speed * t + phaseOffset;
+
+          // 本地軌道平面
+          const xLocal = r * Math.cos(angle);
+          const yLocal = r * Math.sin(angle) * 0.4; // 壓扁模擬 3D 斜切面
+          z = r * Math.sin(angle); // 動態深度
+
+          // 2D 轉動矩陣投影
+          x = cx + xLocal * Math.cos(tiltAngle) - yLocal * Math.sin(tiltAngle);
+          y = cy + xLocal * Math.sin(tiltAngle) + yLocal * Math.cos(tiltAngle);
+        } 
+        else if (type === "p") {
+          color = "#34d399";
+          const boxIndex = parseInt(e.boxId.split("-")[1]) - 1; // px, py, pz (0, 1, 2)
+          
+          let axisAngle = 0;
+          if (boxIndex === 0) axisAngle = 0;      // px
+          if (boxIndex === 1) axisAngle = 90;     // py
+          if (boxIndex === 2) axisAngle = 45;     // pz
+          const radAxis = axisAngle * Math.PI / 180;
+
+          // 排斥力錯開相位量
+          let phaseOffset = boxIndex * (Math.PI / 3);
+          if (e.spin === "down") {
+            phaseOffset += Math.PI; 
+          }
+
+          const angle = speed * t + phaseOffset;
+          const d = r * Math.cos(angle); // 沿著軸向來回穿梭
+          z = r * Math.sin(angle);       // 以正弦波模擬前後景深度
+
+          x = cx + d * Math.cos(radAxis);
+          y = cy + d * Math.sin(radAxis);
+        } 
+        else if (type === "d") {
+          color = "#fbbf24";
+          const boxIndex = parseInt(e.boxId.split("-")[1]) - 1; // 0 至 4 
+          const axisAngle = boxIndex * 72; // 3d 簡併軌域五向
+          const radAxis = axisAngle * Math.PI / 180;
+
+          // 排斥力錯開相位量
+          let phaseOffset = boxIndex * (2 * Math.PI / 5);
+          if (e.spin === "down") {
+            phaseOffset += Math.PI;
+          }
+
+          const angle = speed * t + phaseOffset;
+          const d = (r - 8) * Math.cos(angle);
+          z = (r - 8) * Math.sin(angle);
+
+          x = cx + d * Math.cos(radAxis);
+          y = cy + d * Math.sin(radAxis);
+        }
+
+        // 判斷是否為當前步驟配置的電子（最後一個填入的電子）
+        const isCurrent = (idx === electronsList.length - 1);
+
+        activeCoords.push({
+          boxId: e.boxId,
+          orbitalId: e.orbitalId,
+          spin: e.spin,
+          color: color,
+          x: x,
+          y: y,
+          z: z,
+          isCurrent: isCurrent
+        });
+      });
+
+      // 2. 計算與繪製半透明庫倫排斥力向量線 (動態連線)
+      let repulsionHtml = "";
+      
+      // 只對當前活動軌域 (activeOrbitalId) 繪製排斥力
+      if (activeOrbitalId) {
+        // 規則 A：同軌域 (相同 boxId) 電子強庫倫排斥 (紅色虛線，濁度 0.4)
+        for (let i = 0; i < activeCoords.length; i++) {
+          for (let j = i + 1; j < activeCoords.length; j++) {
+            const e1 = activeCoords[i];
+            const e2 = activeCoords[j];
+
+            if (e1.orbitalId === activeOrbitalId && e1.boxId === e2.boxId) {
+              repulsionHtml += `
+                <line x1="${e1.x}" y1="${e1.y}" x2="${e2.x}" y2="${e2.y}" 
+                      stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.4" />
+              `;
+            }
+          }
+        }
+
+        // 規則 B：同副殼層不同軌域電子弱庫倫排斥 (橘色細點線，濁度 0.2)
+        for (let i = 0; i < activeCoords.length; i++) {
+          for (let j = i + 1; j < activeCoords.length; j++) {
+            const e1 = activeCoords[i];
+            const e2 = activeCoords[j];
+
+            if (e1.orbitalId === activeOrbitalId && e1.orbitalId === e2.orbitalId && e1.boxId !== e2.boxId) {
+              if (e1.spin === "up" && e2.spin === "up") {
+                repulsionHtml += `
+                  <line x1="${e1.x}" y1="${e1.y}" x2="${e2.x}" y2="${e2.y}" 
+                        stroke="#fb923c" stroke-width="0.75" stroke-dasharray="1,2" opacity="0.2" />
+                `;
+              }
+            }
+          }
+        }
+      }
+      svgRepulsion.innerHTML = repulsionHtml;
+
+      // 3. 繪製電子本體，並利用深度 z 分拆至前景與背景
+      activeCoords.forEach(ec => {
+        let extraGlowHtml = "";
+        let finalColor = ec.color;
+
+        // 如果是最新配置的電子，使用高亮色彩並加上動態擴張波紋
+        if (ec.isCurrent) {
+          finalColor = "#facc15"; // 高亮黃色
+          extraGlowHtml = `
+            <!-- 最新配置電子的動態波紋環 -->
+            <circle cx="${ec.x}" cy="${ec.y}" r="12" fill="none" stroke="#facc15" stroke-width="1.2" stroke-dasharray="3,2" opacity="0.8">
+              <animate attributeName="r" values="8;16;8" dur="1.8s" repeatCount="indefinite" />
+              <animate attributeName="opacity" values="0.8;0.1;0.8" dur="1.8s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="${ec.x}" cy="${ec.y}" r="11" fill="#facc15" opacity="0.3" filter="url(#glow)" />
+          `;
+        }
+
+        const electronHtml = `
+          <g>
+            ${extraGlowHtml}
+            <!-- 外圈微光 -->
+            <circle cx="${ec.x}" cy="${ec.y}" r="8" fill="${finalColor}" opacity="0.3" filter="url(#glow)" />
+            <!-- 電子粒子 -->
+            <circle cx="${ec.x}" cy="${ec.y}" r="${ec.isCurrent ? 5.5 : 4.5}" fill="${finalColor}" />
+            <circle cx="${ec.x - 1.2}" cy="${ec.y - 1.2}" r="1.2" fill="#ffffff" opacity="0.9" />
+            <!-- 自旋箭頭 -->
+            ${drawSpinIndicator(ec.x, ec.y, ec.spin, finalColor)}
+          </g>
+        `;
+
+        // z < 0 的電子畫在背景圖層 (低於原子核)，z >= 0 則在前景圖層 (高於原子核)
+        if (ec.z < 0) {
+          svgBehindElectrons.innerHTML += electronHtml;
+        } else {
+          svgFrontElectrons.innerHTML += electronHtml;
+        }
+      });
+    }
+
+    // 繪製自旋輔助箭頭
+    function drawSpinIndicator(ex, ey, spin, customColor) {
+      const ax = ex + 9;
+      const ay = ey - 4;
+      const strokeColor = customColor || (spin === "up" ? "#60a5fa" : "#f472b6");
+      if (spin === "up") {
+        return `
+          <path d="M${ax} ${ay+4} L${ax} ${ay-4} M${ax} ${ay-4} L${ax-2} ${ay-1} M${ax} ${ay-4} L${ax+2} ${ay-1}" 
+                stroke="${strokeColor}" stroke-width="1.2" fill="none" opacity="0.9" />
+        `;
+      } else {
+        return `
+          <path d="M${ax} ${ay-4} L${ax} ${ay+4} M${ax} ${ay+4} L${ax-2} ${ay+1} M${ax} ${ay+4} L${ax+2} ${ay+1}" 
+                stroke="${strokeColor}" stroke-width="1.2" fill="none" opacity="0.9" />
+        `;
+      }
+    }
+
+    // ----------------------------------------------------
+    // 事件監聽與主程序循環
+    // ----------------------------------------------------
+    atomSelect.addEventListener("change", (e) => {
+      currentAtomIndex = parseInt(e.target.value);
+      resetSimulation();
+    });
+
+    stepBtn.addEventListener("click", () => {
+      const atom = ATOMS[currentAtomIndex];
+      if (currentElectronCount < atom.z) {
+        currentElectronCount++;
+        updateUI();
+        setupStaticSVG(); // 電子數量改變，重新渲染副殼層軌跡形狀
+      }
+    });
+
+    resetBtn.addEventListener("click", () => {
+      resetSimulation();
+    });
+
+    // 主起動與動畫循環
+    window.addEventListener("DOMContentLoaded", () => {
+      initAtomSelect();
+      resetSimulation();
+
+      // 每幀持續呼叫動力學渲染
+      function animate() {
+        const t = performance.now() / 1000;
+        updateDynamicSVG(t);
+        requestAnimationFrame(animate);
+      }
+      requestAnimationFrame(animate);
+    });
+  </script>
+</body>
+</html>
