@@ -17,6 +17,7 @@ description: "收錄並歸檔所有學習過程中用於輔助理解產生的多
 	<meta property="og:title" content="首頁 - {{ site.github.repository_name }}" />
 	<meta property="og:description" content="{{ page.description | default: site.description | strip_html | strip_newlines | truncate: 160 }}" />
 	<meta property="og:url" content="{{ page.url | absolute_url }}" />
+	<link rel="canonical" href="{{ page.url | absolute_url }}" />
 	<meta property="og:image" content="https://github.com/{{ site.github.owner_name }}.png?size=630" />
     <style>
         /* ── CSS 變數定義（支援亮色與暗色模式切換） ── */
@@ -258,6 +259,9 @@ description: "收錄並歸檔所有學習過程中用於輔助理解產生的多
     {% endif %}
 {% endfor %}
 
+<!-- 依照網頁標題(zh-Hant)排序子目錄 -->
+{% assign category_pages_sorted = category_pages | sort: "title" %}
+
 <div class="portal-wrapper">
 
     <!-- 頂部導航欄 -->
@@ -331,8 +335,43 @@ description: "收錄並歸檔所有學習過程中用於輔助理解產生的多
         <div class="results-indicator" id="countBadge">{{ category_count }} 筆項目</div>
     </div>
 
-    <!-- 2/3欄 網格卡片區 -->
-    <div class="portal-grid" id="portalGrid"></div>
+    <!-- 2/3欄 網格卡片區 (利用 Jekyll 伺服器端純 HTML 渲染，爬蟲不需執行 JS 即可直接讀取所有連結) -->
+    <div class="portal-grid" id="portalGrid">
+        {% for cat in category_pages_sorted %}
+            {% assign cat_dir = cat.dir %}
+            
+            <!-- 清理目錄路徑兩側的斜線，如 "/ai-tools/" 轉換成 "ai-tools" -->
+            {% assign clean_path = cat_dir %}
+            {% assign clean_path_size = clean_path | size %}
+            {% if clean_path_size > 1 %}
+                {% assign clean_path_len = clean_path_size | minus: 2 %}
+                {% assign clean_path = clean_path | slice: 1, clean_path_len %}
+            {% endif %}
+
+            <div class="dir-card">
+                <!-- 卡片頂部 -->
+                <div class="dir-header">
+                    <div class="dir-title-area">
+                        <div class="dir-icon-wrap icon-default">
+                            <i data-lucide="folder" style="width:18px;height:18px;"></i>
+                        </div>
+                        <div style="min-width: 0;">
+                            <a href="{{ cat.url | relative_url }}" class="dir-title">
+                                {{ cat.title | default: cat.name }}
+                                <i data-lucide="arrow-up-right" style="width:14px;height:14px;"></i>
+                            </a>
+                            <div class="dir-path">{{ clean_path }}</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 卡片主體（僅保留子目錄描述，移除耗時的 nested posts Liquid 迴圈以優化效能） -->
+                <div class="dir-body">
+                    <p class="dir-desc">{{ cat.description | default: "暫無描述。" }}</p>
+                </div>
+            </div>
+        {% endfor %}
+    </div>
 
 </div>
 
@@ -403,104 +442,7 @@ description: "收錄並歸檔所有學習過程中用於輔助理解產生的多
         lucide.createIcons();
     }
 
-    // ── Jekyll 後端自動生成子目錄資訊陣列 ──────────────────
-    const allPagesData = [];
-
-    {% for cat in category_pages %}
-        {% assign cat_dir = cat.dir %}
-        allPagesData.push({
-            // 自動移除路徑前後斜線，如 "/ai-tools/" 轉換成乾淨的 "ai-tools"
-            path: {{ cat.dir | jsonify }}.replace(/^\/|\/$/g, ''),
-            url: {{ cat.url | relative_url | jsonify }},
-            title: {{ cat.title | default: cat.name | jsonify }},
-            description: {{ cat.description | default: "暫無描述。" | jsonify }},
-            role: {{ cat.role | default: "primary" | jsonify }},
-            related: [
-                {% assign first = true %}
-                {% for p in site.pages %}
-                    {% if p.dir == cat_dir and p.url != cat.url %}
-                        {% unless first %},{% endunless %}
-                        {
-                            path: {{ p.url | jsonify }}.replace(/^\/|\/$/g, ''),
-                            url: {{ p.url | relative_url | jsonify }},
-                            title: {{ p.title | default: p.name | jsonify }},
-                            role: {{ p.role | default: "primary" | jsonify }}
-                        }
-                        {% assign first = false %}
-                    {% endif %}
-                {% endfor %}
-            ]
-        });
-    {% endfor %}
-
-    // 在前端依據語系名稱排序
-    allPagesData.sort((a, b) => a.title.localeCompare(b.title, 'zh-Hant'));
-
-    function esc(str) {
-        return String(str)
-            .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-            .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    }
-
-    // 建立卡片 DOM
-    function buildDirCard(p) {
-        const iconClass = 'icon-default';
-        const iconName = 'folder';
-
-        /* 【保留樣式區塊】
-           未來如欲啟用「最近新增」或「精選收錄」列表，只需：
-           1. 將本 HTML style 區塊中 .recent-files-box 的 "display: none" 移除。
-        */
-        let recentFilesHTML = '';
-        if (p.related && p.related.length > 0) {
-            recentFilesHTML = `
-                <div class="recent-files-box">
-                    <div class="files-header">最近新增</div>
-                    <div class="file-list">
-                        ${p.related.map(rel => `
-                            <a href="${esc(rel.url)}" class="file-item">
-                                <div class="file-left">
-                                    <i data-lucide="file-text" style="width:13px;height:13px;"></i>
-                                    <span class="file-name">${esc(rel.title)}</span>
-                                </div>
-                                <i data-lucide="chevron-right" style="width:12px;height:12px;color:var(--text-muted);"></i>
-                            </a>
-                        `).join('')}
-                    </div>
-                </div>
-            `;
-        }
-
-        const card = document.createElement('div');
-        card.className = 'dir-card';
-
-        card.innerHTML = `
-            <div class="dir-header">
-                <div class="dir-title-area">
-                    <div class="dir-icon-wrap ${iconClass}">
-                        <i data-lucide="${iconName}" style="width:18px;height:18px;"></i>
-                    </div>
-                    <div style="min-width: 0;">
-                        <a href="${esc(p.url)}" class="dir-title">
-                            ${esc(p.title)}
-                            <i data-lucide="arrow-up-right" style="width:14px;height:14px;"></i>
-                        </a>
-                        <div class="dir-path">${esc(p.path)}</div>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="dir-body">
-                <p class="dir-desc">${esc(p.description)}</p>
-                ${recentFilesHTML}
-            </div>
-        `;
-        return card;
-    }
-
-    // 渲染卡片
-    const grid = document.getElementById('portalGrid');
-    allPagesData.forEach(p => grid.appendChild(buildDirCard(p)));
+    // 初始化 Lucide 圖示
     lucide.createIcons();
 
     // ── 滾動事件（回到頁首與黑暗模式位移） ──
