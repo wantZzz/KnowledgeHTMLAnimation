@@ -417,7 +417,7 @@ layout: null
                 <div class="header-subtitle">{{ page.description }}</div>
             </div>
         </div>
-        <a class="back-btn" href="{{ page.dir | split: "/" | pop | join: "/" | prepend: "/" | append: "/" | relative_url }}">
+        <a class="back-btn" href="{{ page.dir | split: "/" | pop | join: "/" | prepend: "/" | append: "/" | replace: "//", "/" | relative_url }}">
             <i data-lucide="corner-left-up" style="width:13px;height:13px;"></i>
             上一層
         </a>
