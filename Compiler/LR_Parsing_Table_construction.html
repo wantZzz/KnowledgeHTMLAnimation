@@ -1,0 +1,667 @@
+---
+layout: page_info_injector
+title: "[Chapter 4.6] LR 分析下轉移表構建"
+description: "根據狀態集構建終端/非終端符號轉移表，並配有 DFA 狀態轉移圖輔助理解當前狀態。"
+role: "primary"
+related: []
+tags: ["移動端友善"]
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LR 語法分析中項目集閉包與 GOTO 函數逐步演示</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .transition-all-custom {
+            transition: all 0.3s ease-in-out;
+        }
+        .step-pill {
+            transition: all 0.3s ease-in-out;
+        }
+        .step-pill.active {
+            background-color: #3b82f6;
+            color: #ffffff;
+        }
+        .item-row {
+            transition: all 0.3s ease;
+        }
+        .item-row.highlight {
+            background-color: rgba(59, 130, 246, 0.1);
+            border-left-color: #3b82f6;
+        }
+        .dfa-node {
+            transition: stroke 0.3s, fill 0.3s, filter 0.3s;
+        }
+        .dfa-node.active {
+            stroke: #10b981;
+            fill: #064e3b;
+            filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.6));
+        }
+        .dfa-edge {
+            transition: stroke 0.3s, stroke-width 0.3s;
+        }
+        .dfa-edge.active {
+            stroke: #f59e0b;
+            stroke-width: 2.5;
+        }
+        .table-cell-highlight {
+            background-color: rgba(245, 158, 11, 0.15) !important;
+            color: #f59e0b !important;
+            font-weight: bold;
+            border: 2px solid #f59e0b !important;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col justify-between">
+
+    <!-- 頁首 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6 shadow-sm">
+        <div class="max-w-6xl mx-auto flex items-center justify-between">
+            <h1 class="text-xl font-bold tracking-tight text-slate-900">編譯器設計：DFA 狀態轉移與 ACTION/GOTO 分析表同步建構</h1>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-mono">Chapter 4.6 Simple LR Parsing</span>
+        </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="max-w-6xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
+        
+        <!-- 左側控制面板與判定說明 -->
+        <section class="lg:col-span-5 flex flex-col gap-4">
+            
+            <!-- 核心逐步說明面板 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between min-h-[300px]">
+                <div>
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-bold text-slate-900 text-sm">剖析建構執行進度</h3>
+                        <span id="step-badge" class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-mono">步驟 1 / 10</span>
+                    </div>
+
+                    <!-- 步驟進度條 -->
+                    <div class="flex gap-1 mb-4" id="step-dots-container">
+                        <!-- 動態生成步驟點 -->
+                    </div>
+                    
+                    <div class="prose prose-sm text-slate-600 leading-relaxed min-h-[140px]" id="step-desc">
+                        載入中...
+                    </div>
+                </div>
+
+                <!-- 多步互動元素：限制於上一步與下一步按鈕 -->
+                <div class="border-t border-slate-100 pt-4 mt-6 flex items-center justify-between gap-3">
+                    <button id="btn-prev" onclick="prevStep()" class="flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                        上一步 (Prev)
+                    </button>
+                    <button id="btn-next" onclick="nextStep()" class="flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm">
+                        下一步 (Next)
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 學術定義與編譯實務意義看板 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex-grow flex flex-col justify-between">
+                <div>
+                    <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                        <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+                        <span>DFA 轉移與分析表之對接物理意義</span>
+                    </h2>
+                    
+                    <div class="space-y-3 text-xs leading-relaxed text-slate-600">
+                        <div class="border-l-2 border-emerald-500 pl-2.5">
+                            <span class="font-bold text-slate-800 block mb-0.5">移進動作 (Shift) 的映射原理</span>
+                            <span>當狀態 Ii 在 DFA 中讀入<b>終端符號</b> a 轉移狀態 Ij 時，直接映射為分析表中的 ACTION[i, a] = 移進 Ij。</span>
+                        </div>
+                        <div class="border-l-2 border-teal-500 pl-2.5">
+                            <span class="font-bold text-slate-800 block mb-0.5">GOTO 動作的映射原理</span>
+                            <span>當狀態 Ii 在 DFA 中讀入<b>非終端符號</b> A 轉移狀態 Ij 時，映射為分析表中的 GOTO[i, A] = 轉移 Ij。</span>
+                        </div>
+                        <div class="border-l-2 border-purple-500 pl-2.5">
+                            <span class="font-bold text-slate-800 block mb-0.5">歸約動作 (Reduce) 的映射原理</span>
+                            <span>若項目集 Ii 內含有圓點到最右端的歸約項目 A &rarr; &beta; &middot;，則對於 FOLLOW(A) 中的所有終端符號 a，填入 ACTION[i, a] = 依規則 (k) 歸約。</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- 右側視覺化對比與模擬畫布 -->
+        <section class="lg:col-span-7 flex flex-col gap-4">
+            <!-- 文法規則參考 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">演示用增廣文法 (Augmented Grammar)</div>
+                <div class="grid grid-cols-4 gap-2 font-mono text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                    <div>(0) E' &rarr; E</div>
+                    <div>(1) E &rarr; E + T</div>
+                    <div>(2) E &rarr; T</div>
+                    <div>(3) T &rarr; id</div>
+                    <div class="col-span-4 border-t border-slate-200/60 pt-1.5 mt-1 text-[10px] text-slate-400">
+                        *增廣文法 (Augmented) 藉由引入 E' &rarr; E，確保剖析器擁有唯一的接受（Accept）終點。
+                    </div>
+                </div>
+            </div>
+
+            <!-- DFA 自動機圖形面板 -->
+            <div class="bg-slate-900 text-slate-100 p-4 rounded-xl font-mono text-xs shadow-inner flex flex-col gap-2">
+                <div class="flex justify-between text-slate-400 text-[10px] border-b border-slate-800 pb-1.5 mb-1.5">
+                    <span>規範 LR(0) 項目集 DFA 狀態圖 (DFA State Graph)</span>
+                    <span id="current-op-status" class="text-amber-400 font-bold">初始化</span>
+                </div>
+                
+                <div class="relative w-full h-[190px] bg-slate-950 rounded-lg flex items-center justify-center">
+                    <svg id="dfa-svg" class="w-full h-full" viewBox="0 0 540 190">
+                        <!-- 動態繪製 DFA 的 States 與 Transitions -->
+                    </svg>
+                </div>
+            </div>
+
+            <!-- ACTION / GOTO 分析表建構面板 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">SLR(1) Parsing Table M (ACTION / GOTO)</div>
+                <div class="overflow-x-auto text-[10px] font-mono">
+                    <table class="w-full border-collapse border border-slate-200 text-center">
+                        <thead>
+                            <tr class="bg-slate-100 text-slate-600 font-bold text-xs">
+                                <th class="border border-slate-200 p-2" rowspan="2">狀態 (State)</th>
+                                <th class="border border-slate-200 p-2" colspan="3">ACTION (終端符號)</th>
+                                <th class="border border-slate-200 p-2" colspan="2">GOTO (非終端)</th>
+                            </tr>
+                            <tr class="bg-slate-50 text-slate-500 font-bold text-xs">
+                                <th class="border border-slate-200 p-1.5">id</th>
+                                <th class="border border-slate-200 p-1.5">+</th>
+                                <th class="border border-slate-200 p-1.5">$</th>
+                                <th class="border border-slate-200 p-1.5">E</th>
+                                <th class="border border-slate-200 p-1.5">T</th>
+                            </tr>
+                        </thead>
+                        <tbody id="parsing-table-body">
+                            <!-- 查表表格狀態動態渲染 -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="mt-3 flex justify-between items-center text-[10px] text-slate-400 font-mono">
+                    <span>文法求值輔助：FOLLOW(E) = { +, $ } &nbsp;|&nbsp; FOLLOW(T) = { +, $ }</span>
+                    <span class="text-amber-500 font-bold" id="current-eval-action">當前建置動作：無</span>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- 頁尾 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500">
+        <div class="max-w-6xl mx-auto">
+             編譯器設計課程輔助學術軟體 - LR 語法分析自動機對接
+        </div>
+    </footer>
+
+    <script>
+        // DFA 節點座標設定
+        const dfaNodes = {
+            I0: { x: 50, y: 95, label: "I0" },
+            I1: { x: 190, y: 45, label: "I1" },
+            I2: { x: 190, y: 110, label: "I2" },
+            I3: { x: 190, y: 155, label: "I3" },
+            I4: { x: 330, y: 45, label: "I4" },
+            I5: { x: 470, y: 45, label: "I5" }
+        };
+
+        // DFA 轉移弧線定義
+        const dfaEdges = [
+            { from: "I0", to: "I1", symbol: "E", type: "nonterminal", id: "I0_I1" },
+            { from: "I0", to: "I2", symbol: "T", type: "nonterminal", id: "I0_I2" },
+            { from: "I0", to: "I3", symbol: "id", type: "terminal", id: "I0_I3" },
+            { from: "I1", to: "I4", symbol: "+", type: "terminal", id: "I1_I4" },
+            { from: "I4", to: "I5", symbol: "T", type: "nonterminal", id: "I4_I5" },
+            { from: "I4", to: "I3", symbol: "id", type: "terminal", id: "I4_I3" }
+        ];
+
+        // 逐步操作數據設定
+        const stepsData = [
+            {
+                desc: "<b>步驟 1 - DFA 初始狀態 I&#8320; 確立：</b>透過閉包運算完成初始項目集 <code>I&#8320;</code>：<br><code>{ E' &rarr; &middot; E, E &rarr; &middot; E+T, E &rarr; &middot; T, T &rarr; &middot; id }</code>。<br>此時分析表完全空白，DFA 圖中初始狀態 <code>I&#8320;</code> 閃爍亮起，我們準備開始對接轉移。",
+                opStatus: "初始狀態 I0 確立",
+                evalAction: "載入 I0 項目集",
+                activeNodes: ["I0"],
+                activeEdges: [],
+                tableState: {
+                    0: { id: "", plus: "", s: "", e: "", t: "" },
+                    1: { id: "", plus: "", s: "", e: "", t: "" },
+                    2: { id: "", plus: "", s: "", e: "", t: "" },
+                    3: { id: "", plus: "", s: "", e: "", t: "" },
+                    4: { id: "", plus: "", s: "", e: "", t: "" },
+                    5: { id: "", plus: "", s: "", e: "", t: "" }
+                },
+                highlights: []
+            },
+            {
+                desc: "<b>步驟 2 - 映射 I&#8320; 遇到非終端 E 的 GOTO 轉移：</b>在 DFA 中，狀態 <code>I&#8320;</code> 讀入非終端符號 <code>E</code> 會轉移狀態 <code>I&#8321;</code>。因為 <code>E</code> 是非終端符號，該轉移直接映射為分析表 GOTO 區：<code>GOTO[0, E] = 轉移 I1</code>。",
+                opStatus: "對接 GOTO(I0, E)",
+                evalAction: "GOTO[0, E] 填入 轉移 I1",
+                activeNodes: ["I0", "I1"],
+                activeEdges: ["I0_I1"],
+                tableState: {
+                    0: { id: "", plus: "", s: "", e: "轉移 I1", t: "" },
+                    1: { id: "", plus: "", s: "", e: "", t: "" },
+                    2: { id: "", plus: "", s: "", e: "", t: "" },
+                    3: { id: "", plus: "", s: "", e: "", t: "" },
+                    4: { id: "", plus: "", s: "", e: "", t: "" },
+                    5: { id: "", plus: "", s: "", e: "", t: "" }
+                },
+                highlights: [{ r: 0, c: "e" }]
+            },
+            {
+                desc: "<b>步驟 3 - 映射 I&#8320; 遇到非終端 T 與終端 id 的轉移：</b>接著，讀入非終端 <code>T</code> 轉移 <code>I&#8322;</code> &rArr; <code>GOTO[0, T] = 轉移 I2</code>。<br>讀入終端 <code>id</code> 轉移 <code>I&#8323;</code> &rArr; 屬於 ACTION 區，填入移進指令 <code>移進 I3</code>。",
+                opStatus: "對接 GOTO(I0, T) 與 ACTION(I0, id)",
+                evalAction: "GOTO[0, T] 填入 轉移 I2, ACTION[0, id] 填入 移進 I3",
+                activeNodes: ["I0", "I2", "I3"],
+                activeEdges: ["I0_I2", "I0_I3"],
+                tableState: {
+                    0: { id: "移進 I3", plus: "", s: "", e: "轉移 I1", t: "轉移 I2" },
+                    1: { id: "", plus: "", s: "", e: "", t: "" },
+                    2: { id: "", plus: "", s: "", e: "", t: "" },
+                    3: { id: "", plus: "", s: "", e: "", t: "" },
+                    4: { id: "", plus: "", s: "", e: "", t: "" },
+                    5: { id: "", plus: "", s: "", e: "", t: "" }
+                },
+                highlights: [{ r: 0, c: "id" }, { r: 0, c: "t" }]
+            },
+            {
+                desc: "<b>步驟 4 - 映射狀態 I&#8321; 的移位與接受（Accept）判定：</b>狀態 <code>I&#8321;</code> 內含有項目 <code>E' &rarr; E &middot;</code>，圓點已到最右端且頭部為增廣開始符號。因此在結束標記 <code>$</code> 處填入 <code>接受</code>。<br>此外，<code>I&#8321;</code> 讀入 <code>+</code> 轉移 <code>I&#8324;</code>，在分析表中填入 <code>移進 I4</code>。",
+                opStatus: "狀態 I1 轉移對接",
+                evalAction: "ACTION[1, $] 填入 接受, ACTION[1, +] 填入 移進 I4",
+                activeNodes: ["I1", "I4"],
+                activeEdges: ["I1_I4"],
+                tableState: {
+                    0: { id: "移進 I3", plus: "", s: "", e: "轉移 I1", t: "轉移 I2" },
+                    1: { id: "", plus: "移進 I4", s: "接受", e: "", t: "" },
+                    2: { id: "", plus: "", s: "", e: "", t: "" },
+                    3: { id: "", plus: "", s: "", e: "", t: "" },
+                    4: { id: "", plus: "", s: "", e: "", t: "" },
+                    5: { id: "", plus: "", s: "", e: "", t: "" }
+                },
+                highlights: [{ r: 1, c: "plus" }, { r: 1, c: "s" }]
+            },
+            {
+                desc: "<b>步驟 5 - 映射 I&#8322; 的歸約動作 (Reduce)：</b>狀態 <code>I&#8322;</code> 內僅有項目 <code>E &rarr; T &middot;</code>，圓點位於最右端，代表應套用規則 (2) 進行歸約。依據 SLR 填表演算法，我們必須在 <code>FOLLOW(E) = { +, $ }</code> 中的所有欄位填入 <code>歸約規則 (2)</code>。",
+                opStatus: "狀態 I2 歸約動作對接",
+                evalAction: "ACTION[2, +] 填入 歸約規則 (2), ACTION[2, $] 填入 歸約規則 (2)",
+                activeNodes: ["I2"],
+                activeEdges: [],
+                tableState: {
+                    0: { id: "移進 I3", plus: "", s: "", e: "轉移 I1", t: "轉移 I2" },
+                    1: { id: "", plus: "移進 I4", s: "接受", e: "", t: "" },
+                    2: { id: "", plus: "歸約規則 (2)", s: "歸約規則 (2)", e: "", t: "" },
+                    3: { id: "", plus: "", s: "", e: "", t: "" },
+                    4: { id: "", plus: "", s: "", e: "", t: "" },
+                    5: { id: "", plus: "", s: "", e: "", t: "" }
+                },
+                highlights: [{ r: 2, c: "plus" }, { r: 2, c: "s" }]
+            },
+            {
+                desc: "<b>步驟 6 - 映射 I&#8323; 的歸約動作 (Reduce)：</b>狀態 <code>I&#8323;</code> 內含有 <code>T &rarr; id &middot;</code>，代表可套用規則 (3) 進行歸約。我們在 <code>FOLLOW(T) = { +, $ }</code> 的對應終端符號格內，同步填入歸約指令 <code>歸約規則 (3)</code>。",
+                opStatus: "狀態 I3 歸約動作對接",
+                evalAction: "ACTION[3, +] 填入 歸約規則 (3), ACTION[3, $] 填入 歸約規則 (3)",
+                activeNodes: ["I3"],
+                activeEdges: [],
+                tableState: {
+                    0: { id: "移進 I3", plus: "", s: "", e: "轉移 I1", t: "轉移 I2" },
+                    1: { id: "", plus: "移進 I4", s: "接受", e: "", t: "" },
+                    2: { id: "", plus: "歸約規則 (2)", s: "歸約規則 (2)", e: "", t: "" },
+                    3: { id: "", plus: "歸約規則 (3)", s: "歸約規則 (3)", e: "", t: "" },
+                    4: { id: "", plus: "", s: "", e: "", t: "" },
+                    5: { id: "", plus: "", s: "", e: "", t: "" }
+                },
+                highlights: [{ r: 3, c: "plus" }, { r: 3, c: "s" }]
+            },
+            {
+                desc: "<b>步驟 7 - 映射 I&#8324; 的狀態轉移 (GOTO/ACTION)：</b>狀態 <code>I&#8324;</code> 讀入非終端 <code>T</code> 轉移 <code>I&#8325;</code> &rArr; GOTO 區填入 <code>轉移 I5</code>。<br>讀入終端 <code>id</code> 轉移 <code>I&#8323;</code> &rArr; ACTION 區填入移進指令 <code>移進 I3</code> (DFA 對應圖中斜向下之弧線)。",
+                opStatus: "狀態 I4 轉移邊對接",
+                evalAction: "GOTO[4, T] 填入 轉移 I5, ACTION[4, id] 填入 移進 I3",
+                activeNodes: ["I4", "I5", "I3"],
+                activeEdges: ["I4_I5", "I4_I3"],
+                tableState: {
+                    0: { id: "移進 I3", plus: "", s: "", e: "轉移 I1", t: "轉移 I2" },
+                    1: { id: "", plus: "移進 I4", s: "接受", e: "", t: "" },
+                    2: { id: "", plus: "歸約規則 (2)", s: "歸約規則 (2)", e: "", t: "" },
+                    3: { id: "", plus: "歸約規則 (3)", s: "歸約規則 (3)", e: "", t: "" },
+                    4: { id: "移進 I3", plus: "", s: "", e: "", t: "轉移 I5" },
+                    5: { id: "", plus: "", s: "", e: "", t: "" }
+                },
+                highlights: [{ r: 4, c: "id" }, { r: 4, c: "t" }]
+            },
+            {
+                desc: "<b>步驟 8 - 映射 I&#8325; 的歸約動作 (Reduce)：</b>最後，狀態 <code>I&#8325;</code> 內含有項目 <code>E &rarr; E + T &middot;</code>。其代表可套用規則 (1) 進行歸約。我們在 <code>FOLLOW(E) = { +, $ }</code> 中的所有欄位，對接並填入 <code>歸約規則 (1)</code> 歸約指令。",
+                opStatus: "狀態 I5 歸約動作對接",
+                evalAction: "ACTION[5, +] 填入 歸約規則 (1), ACTION[5, $] 填入 歸約規則 (1)",
+                activeNodes: ["I5"],
+                activeEdges: [],
+                tableState: {
+                    0: { id: "移進 I3", plus: "", s: "", e: "轉移 I1", t: "轉移 I2" },
+                    1: { id: "", plus: "移進 I4", s: "接受", e: "", t: "" },
+                    2: { id: "", plus: "歸約規則 (2)", s: "歸約規則 (2)", e: "", t: "" },
+                    3: { id: "", plus: "歸約規則 (3)", s: "歸約規則 (3)", e: "", t: "" },
+                    4: { id: "移進 I3", plus: "", s: "", e: "", t: "轉移 I5" },
+                    5: { id: "", plus: "歸約規則 (1)", s: "歸約規則 (1)", e: "", t: "" }
+                },
+                highlights: [{ r: 5, c: "plus" }, { r: 5, c: "s" }]
+            },
+            {
+                desc: "<b>步驟 9 - 精煉查表防呆（語法錯誤處理）：</b>此時，ACTION/GOTO 分析表的所有合法格皆已被精確填滿。所有剩餘空白格皆隱含代表「錯誤 (Error)」，剖析器運行時若查到空欄位，將會直接終止並報錯。",
+                opStatus: "空欄防呆機制確立",
+                evalAction: "空白儲存格 填入 錯誤",
+                activeNodes: ["I0", "I1", "I2", "I3", "I4", "I5"],
+                activeEdges: [],
+                tableState: {
+                    0: { id: "移進 I3", plus: "錯誤", s: "錯誤", e: "轉移 I1", t: "轉移 I2" },
+                    1: { id: "錯誤", plus: "移進 I4", s: "接受", e: "錯誤", t: "錯誤" },
+                    2: { id: "錯誤", plus: "歸約規則 (2)", s: "歸約規則 (2)", e: "錯誤", t: "錯誤" },
+                    3: { id: "錯誤", plus: "歸約規則 (3)", s: "歸約規則 (3)", e: "錯誤", t: "錯誤" },
+                    4: { id: "移進 I3", plus: "錯誤", s: "錯誤", e: "錯誤", t: "轉移 I5" },
+                    5: { id: "錯誤", plus: "歸約規則 (1)", s: "歸約規則 (1)", e: "錯誤", t: "錯誤" }
+                },
+                highlights: []
+            },
+            {
+                desc: "<b>步驟 10 - SLR(1) 建表完全結束：</b>恭喜！DFA 狀態自動機圖形與 ACTION/GOTO 分析表已同步建構完畢。這種嚴謹的一對一數學映射，正是現代編譯器分析表產生器（如 Yacc, Bison）底層自動化編織語法解析器的核心邏輯。",
+                opStatus: "SLR 分析表建置完成",
+                evalAction: "完成雙向對接",
+                activeNodes: ["I0", "I1", "I2", "I3", "I4", "I5"],
+                activeEdges: ["I0_I1", "I0_I2", "I0_I3", "I1_I4", "I4_I5", "I4_I3"],
+                tableState: {
+                    0: { id: "移進 I3", plus: "", s: "", e: "轉移 I1", t: "轉移 I2" },
+                    1: { id: "", plus: "移進 I4", s: "接受", e: "", t: "" },
+                    2: { id: "", plus: "歸約規則 (2)", s: "歸約規則 (2)", e: "", t: "" },
+                    3: { id: "", plus: "歸約規則 (3)", s: "歸約規則 (3)", e: "", t: "" },
+                    4: { id: "移進 I3", plus: "", s: "", e: "", t: "轉移 I5" },
+                    5: { id: "", plus: "歸約規則 (1)", s: "歸約規則 (1)", e: "", t: "" }
+                },
+                highlights: []
+            }
+        ];
+
+        let currentIndex = 0;
+
+        // 初始化演示
+        function initDemo() {
+            currentIndex = 0;
+            renderStep();
+        }
+
+        // 渲染步驟
+        function renderStep() {
+            const step = stepsData[currentIndex];
+            const totalSteps = stepsData.length;
+
+            // 1. 更新進度與說明文字
+            document.getElementById("step-badge").textContent = `步驟 ${currentIndex + 1} / ${totalSteps}`;
+            document.getElementById("step-desc").innerHTML = step.desc;
+
+            // 2. 更新進度條點
+            const dotsContainer = document.getElementById("step-dots-container");
+            dotsContainer.innerHTML = "";
+            for (let i = 0; i < totalSteps; i++) {
+                const dot = document.createElement("div");
+                if (i === currentIndex) {
+                    dot.className = "step-pill h-1.5 flex-grow rounded-full bg-blue-600 transition-all-custom";
+                } else if (i < currentIndex) {
+                    dot.className = "step-pill h-1.5 flex-grow rounded-full bg-blue-300 transition-all-custom";
+                } else {
+                    dot.className = "step-pill h-1.5 flex-grow rounded-full bg-slate-200 transition-all-custom";
+                }
+                dotsContainer.appendChild(dot);
+            }
+
+            // 3. 限制按鈕狀態
+            const prevBtn = document.getElementById("btn-prev");
+            const nextBtn = document.getElementById("btn-next");
+
+            if (currentIndex === 0) {
+                prevBtn.disabled = true;
+                prevBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200";
+            } else {
+                prevBtn.disabled = false;
+                prevBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200";
+            }
+
+            if (currentIndex === totalSteps - 1) {
+                nextBtn.disabled = true;
+                nextBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-slate-200 text-slate-400 text-sm font-medium cursor-not-allowed transition-all duration-200";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm";
+            }
+
+            // 4. 更新狀態與公式看板
+            document.getElementById("current-op-status").textContent = step.opStatus;
+            document.getElementById("current-eval-action").textContent = `當前建置動作：${step.evalAction}`;
+
+            // 5. 動態渲染 DFA SVG
+            renderDfaSvg(step);
+
+            // 6. 動態渲染 ACTION/GOTO 表格
+            renderParsingTable(step);
+        }
+
+        // SVG 渲染邏輯
+        function renderDfaSvg(step) {
+            const svg = document.getElementById("dfa-svg");
+            svg.innerHTML = ''; // 清空舊圖形
+
+            // 1. 繪製連線與標記
+            dfaEdges.forEach(edge => {
+                const fromNode = dfaNodes[edge.from];
+                const toNode = dfaNodes[edge.to];
+                const isEdgeActive = step.activeEdges.includes(edge.id);
+
+                if (fromNode && toNode) {
+                    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+
+                    // 繪製線段
+                    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    line.setAttribute("x1", fromNode.x);
+                    line.setAttribute("y1", fromNode.y);
+                    line.setAttribute("x2", toNode.x);
+                    line.setAttribute("y2", toNode.y);
+                    
+                    if (isEdgeActive) {
+                        line.setAttribute("stroke", "#f59e0b");
+                        line.setAttribute("stroke-width", "2.5");
+                    } else {
+                        line.setAttribute("stroke", "#475569");
+                        line.setAttribute("stroke-width", "1.5");
+                    }
+                    group.appendChild(line);
+
+                    // 繪製箭頭 (靠近目標端)
+                    const angle = Math.atan2(toNode.y - fromNode.y, toNode.x - fromNode.x);
+                    const arrowLen = 5;
+                    const stopDist = 18; // 距離節點中心距離
+                    const arrowX = toNode.x - stopDist * Math.cos(angle);
+                    const arrowY = toNode.y - stopDist * Math.sin(angle);
+                    
+                    const p1x = arrowX - arrowLen * Math.cos(angle - Math.PI/6);
+                    const p1y = arrowY - arrowLen * Math.sin(angle - Math.PI/6);
+                    const p2x = arrowX - arrowLen * Math.cos(angle + Math.PI/6);
+                    const p2y = arrowY - arrowLen * Math.sin(angle + Math.PI/6);
+
+                    const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+                    polygon.setAttribute("points", `${arrowX},${arrowY} ${p1x},${p1y} ${p2x},${p2y}`);
+                    polygon.setAttribute("fill", isEdgeActive ? "#f59e0b" : "#475569");
+                    group.appendChild(polygon);
+
+                    // 繪製轉移符號標籤 (放置於連線中央)
+                    const labelX = (fromNode.x + toNode.x) / 2;
+                    let labelY = (fromNode.y + toNode.y) / 2 - 6;
+                    
+                    // 特殊微調：如果是 I0 -> id 這類的重疊邊，向下偏移
+                    if (edge.id === "I0_I3") {
+                        labelY += 16;
+                    }
+
+                    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                    rect.setAttribute("x", labelX - 10);
+                    rect.setAttribute("y", labelY - 7);
+                    rect.setAttribute("width", 20);
+                    rect.setAttribute("height", 12);
+                    rect.setAttribute("rx", 2);
+                    rect.setAttribute("fill", "#020617");
+                    group.appendChild(rect);
+
+                    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                    text.setAttribute("x", labelX);
+                    text.setAttribute("y", labelY + 2);
+                    text.setAttribute("text-anchor", "middle");
+                    text.setAttribute("fill", isEdgeActive ? "#f59e0b" : "#94a3b8");
+                    text.setAttribute("font-size", "9px");
+                    text.setAttribute("font-weight", "bold");
+                    text.textContent = edge.symbol;
+                    group.appendChild(text);
+
+                    svg.appendChild(group);
+                }
+            });
+
+            // 2. 繪製狀態節點
+            Object.keys(dfaNodes).forEach(key => {
+                const node = dfaNodes[key];
+                const isNodeActive = step.activeNodes.includes(key);
+
+                const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+
+                // 節點本體 (圓形)
+                const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                circle.setAttribute("cx", node.x);
+                circle.setAttribute("cy", node.y);
+                circle.setAttribute("r", 15);
+                circle.setAttribute("class", "dfa-node transition-all-custom");
+                
+                if (isNodeActive) {
+                    circle.setAttribute("stroke", "#10b981");
+                    circle.setAttribute("stroke-width", "2.5");
+                    circle.setAttribute("fill", "#064e3b");
+                } else {
+                    circle.setAttribute("stroke", "#334155");
+                    circle.setAttribute("stroke-width", "1.5");
+                    circle.setAttribute("fill", "#0f172a");
+                }
+                group.appendChild(circle);
+
+                // 節點文字 (標籤)
+                const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                text.setAttribute("x", node.x);
+                text.setAttribute("y", node.y + 4);
+                text.setAttribute("text-anchor", "middle");
+                text.setAttribute("fill", isNodeActive ? "#a7f3d0" : "#94a3b8");
+                text.setAttribute("font-size", "10px");
+                text.setAttribute("font-weight", "bold");
+                text.textContent = node.label;
+                group.appendChild(text);
+
+                svg.appendChild(group);
+            });
+        }
+
+        // 渲染分析表
+        function renderParsingTable(step) {
+            const tableBody = document.getElementById("parsing-table-body");
+            tableBody.innerHTML = "";
+
+            for (let i = 0; i <= 5; i++) {
+                const tr = document.createElement("tr");
+                tr.className = i % 2 === 0 ? "bg-white text-xs" : "bg-slate-50 text-xs";
+
+                // 狀態號碼 (帶有 DFA 節點標示)
+                const tdState = document.createElement("td");
+                tdState.className = "border border-slate-200 p-2 font-bold bg-slate-100 text-slate-700";
+                tdState.textContent = `${i} (I${i})`;
+                tr.appendChild(tdState);
+
+                // ACTION: id
+                const tdId = document.createElement("td");
+                tdId.className = "border border-slate-200 p-2";
+                tdId.textContent = step.tableState[i].id;
+                if (isCellHighlighted(step.highlights, i, "id")) {
+                    tdId.className += " table-cell-highlight";
+                }
+                tr.appendChild(tdId);
+
+                // ACTION: +
+                const tdPlus = document.createElement("td");
+                tdPlus.className = "border border-slate-200 p-2";
+                tdPlus.textContent = step.tableState[i].plus;
+                if (isCellHighlighted(step.highlights, i, "plus")) {
+                    tdPlus.className += " table-cell-highlight";
+                }
+                tr.appendChild(tdPlus);
+
+                // ACTION: $
+                const tdS = document.createElement("td");
+                tdS.className = "border border-slate-200 p-2";
+                tdS.textContent = step.tableState[i].s;
+                if (isCellHighlighted(step.highlights, i, "s")) {
+                    tdS.className += " table-cell-highlight";
+                }
+                tr.appendChild(tdS);
+
+                // GOTO: E
+                const tdE = document.createElement("td");
+                tdE.className = "border border-slate-200 p-2";
+                tdE.textContent = step.tableState[i].e;
+                if (isCellHighlighted(step.highlights, i, "e")) {
+                    tdE.className += " table-cell-highlight";
+                }
+                tr.appendChild(tdE);
+
+                // GOTO: T
+                const tdT = document.createElement("td");
+                tdT.className = "border border-slate-200 p-2";
+                tdT.textContent = step.tableState[i].t;
+                if (isCellHighlighted(step.highlights, i, "t")) {
+                    tdT.className += " table-cell-highlight";
+                }
+                tr.appendChild(tdT);
+
+                tableBody.appendChild(tr);
+            }
+        }
+
+        // 輔育檢查特定儲存格是否需要高亮
+        function isCellHighlighted(highlights, state, col) {
+            return highlights.some(hl => hl.r === state && hl.c === col);
+        }
+
+        // 互動函數：下一步
+        function nextStep() {
+            const data = stepsData;
+            if (currentIndex < data.length - 1) {
+                currentIndex++;
+                renderStep();
+            }
+        }
+
+        // 互動函數：上一步
+        function prevStep() {
+            if (currentIndex > 0) {
+                currentIndex--;
+                renderStep();
+            }
+        }
+
+        // 重置
+        function resetDemo() {
+            initDemo();
+        }
+
+        // 頁面載入完成後執行
+        window.onload = function() {
+            initDemo();
+        };
+    </script>
+</body>
+</html>

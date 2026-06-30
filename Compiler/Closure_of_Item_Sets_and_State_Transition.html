@@ -1,0 +1,487 @@
+---
+layout: page_info_injector
+title: "[Chapter 4.6] 項目集閉包下的狀態集推導"
+description: "將 LR 文法以項目集閉包方式劃分出不同狀態並集合成集，用於構建轉移表以分析輸入程式。"
+role: "primary"
+related: ["LR_Parsing_Table_construction.html"]
+tags: ["移動端友善"]
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LR 語法分析中項目集閉包與 GOTO 函數逐步演示</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .transition-all-custom {
+            transition: all 0.3s ease-in-out;
+        }
+        .step-pill {
+            transition: all 0.3s ease-in-out;
+        }
+        .step-pill.active {
+            background-color: #3b82f6;
+            color: #ffffff;
+        }
+        .item-row {
+            transition: all 0.3s ease;
+        }
+        .item-row.highlight {
+            background-color: rgba(59, 130, 246, 0.1);
+            border-left-color: #3b82f6;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col justify-between">
+
+    <!-- 頁首 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6 shadow-sm">
+        <div class="max-w-6xl mx-auto flex items-center justify-between">
+            <h1 class="text-xl font-bold tracking-tight text-slate-900">編譯器設計：LR(0) 項目集閉包 (CLOSURE) 與 GOTO 函數逐步推導</h1>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-mono">Chapter 4.6 Simple LR Parsing</span>
+        </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="max-w-6xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
+        
+        <!-- 左側控制面板與判定說明 -->
+        <section class="lg:col-span-5 flex flex-col gap-4">
+            
+            <!-- 核心逐步說明面板 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between min-h-[300px]">
+                <div>
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-bold text-slate-900 text-sm">演算法執行進度</h3>
+                        <span id="step-badge" class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-mono">步驟 1 / 8</span>
+                    </div>
+
+                    <!-- 步驟進度條 -->
+                    <div class="flex gap-1 mb-4" id="step-dots-container">
+                        <!-- 動態生成步驟點 -->
+                    </div>
+                    
+                    <div class="prose prose-sm text-slate-600 leading-relaxed min-h-[140px]" id="step-desc">
+                        載入中...
+                    </div>
+                </div>
+
+                <!-- 多步互動元素：限制於上一步與下一步按鈕 -->
+                <div class="border-t border-slate-100 pt-4 mt-6 flex items-center justify-between gap-3">
+                    <button id="btn-prev" onclick="prevStep()" class="flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                        上一步 (Prev)
+                    </button>
+                    <button id="btn-next" onclick="nextStep()" class="flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm">
+                        下一步 (Next)
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 學術定義與編譯實務意義看板 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex-grow flex flex-col justify-between">
+                <div>
+                    <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                        <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+                        <span>定義、作用與其學術意義</span>
+                    </h2>
+                    
+                    <div class="space-y-3 text-xs leading-relaxed text-slate-600">
+                        <div class="border-l-2 border-blue-500 pl-2.5">
+                            <span class="font-bold text-slate-800 block mb-0.5">什麼是 LR(0) 項目 (Item)？</span>
+                            <span>產生式右側加上圓點 <b>&middot;</b> 的形式。圓點左側代表已讀入並匹配之符號；右側代表預期將讀入之符號。其作用在於精確標記剖析器的前進狀態。</span>
+                        </div>
+                        <div class="border-l-2 border-teal-500 pl-2.5">
+                            <span class="font-bold text-slate-800 block mb-0.5">閉包 (CLOSURE) 的作用與意義：</span>
+                            <span>當圓點位於非終端符號（如 <code>&middot; E</code>）前時，代表剖析器預期接下來可展開該非終端符號。閉包運算會強制引入該非終端符號的所有產生式開頭。<b>學術意義：它將所有可能的平行預期路徑歸併為單一狀態，消除了執行期分支的非決定性。</b></span>
+                        </div>
+                        <div class="border-l-2 border-purple-500 pl-2.5">
+                            <span class="font-bold text-slate-800 block mb-0.5">GOTO 函數的作用與意義：</span>
+                            <span><code>GOTO(I, X)</code> 定義了當前狀態集 <code>I</code> 在讀入符號 <code>X</code> 時，狀態轉移（State Transition）後的目標項目集。<b>學術意義：它在數學上定義了 LR DFA（決定性有限自動機）的轉移邊（Edges），構築了移進（Shift）決策基礎。</b></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-4 pt-3 border-t border-slate-100 text-[10px] text-slate-400 font-mono">
+                    對 LR 分析之幫助：使剖析器在 O(n) 時間內無須回溯即可完成結構判定。
+                </div>
+            </div>
+
+        </section>
+
+        <!-- 右側視覺化對比與模擬畫布 -->
+        <section class="lg:col-span-7 flex flex-col gap-4">
+            
+            <!-- 文法規則參考 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">演示用增廣文法 (Augmented Grammar)</div>
+                <div class="grid grid-cols-3 gap-2 font-mono text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                    <div>(0) E' &rarr; E</div>
+                    <div>(1) E &rarr; E + T</div>
+                    <div>(2) E &rarr; T</div>
+                    <div class="col-span-3 border-t border-slate-200/60 pt-1.5 mt-1 text-[10px] text-slate-400">
+                        *增廣文法 (Augmented) 藉由引入 E' &rarr; E，確保剖析器擁有唯一的接受（Accept）終點。
+                    </div>
+                </div>
+            </div>
+
+            <!-- DFA 項目集狀態卡片展示區 -->
+            <div class="bg-slate-900 text-slate-100 p-5 rounded-xl font-mono text-xs shadow-inner flex flex-col gap-4 min-h-[380px] justify-between">
+                
+                <div class="flex justify-between text-slate-400 text-[10px] border-b border-slate-800 pb-2 mb-2">
+                    <span>DFA 項目集建構視野 (DFA Items & GOTO View)</span>
+                    <span id="current-op-status" class="text-amber-400 font-bold">初始化</span>
+                </div>
+
+                <!-- 模擬自動機卡片 -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 flex-grow items-center">
+                    
+                    <!-- 狀態集 I₀ -->
+                    <div class="border rounded-xl p-4 bg-slate-950/80 transition-all-custom" id="state-i0-box">
+                        <div class="flex justify-between items-center border-b border-slate-800 pb-1.5 mb-2.5">
+                            <span class="font-bold text-slate-200 text-sm">狀態集 I₀ (Initial State)</span>
+                            <span class="text-[9px] bg-blue-900/60 text-blue-300 px-2 py-0.5 rounded" id="i0-type-badge">KERNEL</span>
+                        </div>
+                        <div class="space-y-1.5" id="i0-items-list">
+                            <!-- 項目列表動態渲染 -->
+                        </div>
+                    </div>
+
+                    <!-- GOTO 轉移箭頭與狀態集 I₁ -->
+                    <div class="flex flex-col gap-4 items-center">
+                        <!-- 轉移邊指引 -->
+                        <div class="flex items-center gap-2 text-slate-400 font-bold text-xs" id="transition-arrow-box">
+                            <span class="border-t-2 border-dashed border-slate-700 w-12 block"></span>
+                            <span class="bg-slate-800 px-2 py-0.5 rounded text-[10px]" id="transition-symbol-display">-</span>
+                            <span class="border-t-2 border-dashed border-slate-700 w-12 block"></span>
+                        </div>
+
+                        <!-- 狀態集 I₁/I₂ -->
+                        <div class="border rounded-xl p-4 bg-slate-950/80 w-full transition-all-custom opacity-20" id="state-target-box">
+                            <div class="flex justify-between items-center border-b border-slate-800 pb-1.5 mb-2.5">
+                                <span class="font-bold text-slate-200 text-sm" id="target-state-title">狀態集 I₁</span>
+                                <span class="text-[9px] bg-emerald-900/60 text-emerald-300 px-2 py-0.5 rounded" id="target-type-badge">GOTO RESULT</span>
+                            </div>
+                            <div class="space-y-1.5" id="target-items-list">
+                                <div class="text-slate-600 italic">尚未生成</div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- 計算對比矩陣 (代數公式展示) -->
+                <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 text-[10px] text-slate-400 space-y-1">
+                    <div class="font-bold text-slate-300 border-b border-slate-900 pb-1 mb-1">當前數學判定 (Mathematical Formula)</div>
+                    <div id="math-eval-formula">CLOSURE(I) = I &cup; { B &rarr; &middot; &gamma; | A &rarr; &alpha; &middot; B &beta; &isin; CLOSURE(I) }</div>
+                </div>
+
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- 頁尾 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500">
+        <div class="max-w-6xl mx-auto">
+             編譯器設計課程輔助學術軟體 - LR(0) 項目自動機建構
+        </div>
+    </footer>
+
+    <script>
+        // 定義演算法逐步執行數據
+        const stepsData = [
+            {
+                desc: "<b>步驟 1 - 載入初核項目 (Kernel Item)：</b>我們準備建構分析器的起點狀態 <code>I₀</code>。初始時，將增廣文法的第一條產生式 <code>E' &rarr; &middot; E</code> 作為核心種子放入 <code>I₀</code>。此核心項目稱為**核項目 (Kernel Item)**。注意：圓點 <code>&middot;</code> 位於最左側，代表剖析器尚未讀入任何符號。",
+                opStatus: "載入 KERNEL 項目",
+                formula: "I₀ = { E' &rarr; &middot; E }",
+                i0Badge: "KERNEL",
+                i0Items: [
+                    { rule: "E' &rarr; &middot; E", type: "kernel", highlight: true, note: "圓點後為非終端符號 E" }
+                ],
+                arrowSymbol: "-",
+                targetActive: false,
+                targetTitle: "狀態集 I₁",
+                targetItems: [],
+                targetBadge: "GOTO RESULT"
+            },
+            {
+                desc: "<b>步驟 2 - 閉包運算 (CLOSURE) 第一層展開：</b>剖析器進行閉包檢查。發現 <code>E' &rarr; &middot; E</code> 中，圓點 <code>&middot;</code> 的右側緊鄰<b>非終端符號</b> <code>E</code>。這代表剖析器在此狀態下，也預期會看到能展開為 <code>E</code> 的文法路徑。因此，我們必須將所有以 <code>E</code> 為頭部的產生式規則（圓點置於最左側）引入項目集中。",
+                opStatus: "CLOSURE 第一層展開",
+                formula: "E' &rarr; &middot; E 且 E &rarr; &alpha; &rArr; 引入 E &rarr; &middot; &alpha;",
+                i0Badge: "CLOSURE 運算中",
+                i0Items: [
+                    { rule: "E' &rarr; &middot; E", type: "kernel", highlight: false },
+                    { rule: "E &rarr; &middot; E + T", type: "non-kernel", highlight: true, note: "引入：圓點後為非終端 E" },
+                    { rule: "E &rarr; &middot; T", type: "non-kernel", highlight: true, note: "引入：圓點後為非終端 T" }
+                ],
+                arrowSymbol: "-",
+                targetActive: false,
+                targetTitle: "狀態集 I₁",
+                targetItems: [],
+                targetBadge: "GOTO RESULT"
+            },
+            {
+                desc: "<b>步驟 3 - 閉包運算 (CLOSURE) 第二層遞迴：</b>剖析器持續迭代閉包。新引入的項目中，<code>E &rarr; &middot; T</code> 的圓點右側緊鄰<b>非終端符號</b> <code>T</code>。這代表剖析器同樣預期會看到 <code>T</code> 開頭的結構。因此，我們必須將所有以 <code>T</code> 為頭部的產生式（此處為 <code>T &rarr; id</code>）也引入項目集中。",
+                opStatus: "CLOSURE 第二層遞迴",
+                formula: "E &rarr; &middot; T 且 T &rarr; &gamma; &rArr; 引入 T &rarr; &middot; &gamma;",
+                i0Badge: "CLOSURE 運算中",
+                i0Items: [
+                    { rule: "E' &rarr; &middot; E", type: "kernel", highlight: false },
+                    { rule: "E &rarr; &middot; E + T", type: "non-kernel", highlight: false },
+                    { rule: "E &rarr; &middot; T", type: "non-kernel", highlight: false },
+                    { rule: "T &rarr; &middot; id", type: "non-kernel", highlight: true, note: "引入：圓點後為終端 id" }
+                ],
+                arrowSymbol: "-",
+                targetActive: false,
+                targetTitle: "狀態集 I₁",
+                targetItems: [],
+                targetBadge: "GOTO RESULT"
+            },
+            {
+                desc: "<b>步驟 4 - 閉包運算完成，I₀ 狀態確立：</b>剖析器再次檢查，新引入的 <code>T &rarr; &middot; id</code> 圓點右側為終端符號 <code>id</code>，不可再向下展開。閉包運算於此終止。這 4 個項目共同構成了完整的 **狀態集 I₀**。此狀態在學術上代表了整個剖析器啟動時的『初始聯合計策期望』。",
+                opStatus: "I₀ 閉包建構完成",
+                formula: "CLOSURE(I₀) 集合達收斂狀態 (4個項目)",
+                i0Badge: "DFA STATE I₀",
+                i0Items: [
+                    { rule: "E' &rarr; &middot; E", type: "kernel", highlight: false },
+                    { rule: "E &rarr; &middot; E + T", type: "non-kernel", highlight: false },
+                    { rule: "E &rarr; &middot; T", type: "non-kernel", highlight: false },
+                    { rule: "T &rarr; &middot; id", type: "non-kernel", highlight: false }
+                ],
+                arrowSymbol: "-",
+                targetActive: false,
+                targetTitle: "狀態集 I₁",
+                targetItems: [],
+                targetBadge: "GOTO RESULT"
+            },
+            {
+                desc: "<b>步驟 5 - GOTO 函數啟動（狀態轉移）：</b>現在我們模擬剖析器讀入符號時的狀態移位。當前在 <code>I₀</code> 中，有哪些項目的圓點後面是接著非終端符號 <code>E</code>？答案是 <code>E' &rarr; &middot; E</code> 與 <code>E &rarr; &middot; E + T</code>。我們求取 <code>GOTO(I₀, E)</code>，代表當前讀入 <code>E</code> 時的轉移邊（Transitions）。",
+                opStatus: "GOTO(I₀, E) 篩選篩濾",
+                formula: "篩選 I₀ 中圓點緊接 E 的項目，並將圓點右移",
+                i0Badge: "DFA STATE I₀",
+                i0Items: [
+                    { rule: "E' &rarr; &middot; E", type: "kernel", highlight: true, note: "選取：圓點後為 E" },
+                    { rule: "E &rarr; &middot; E + T", type: "non-kernel", highlight: true, note: "選取：圓點後為 E" },
+                    { rule: "E &rarr; &middot; T", type: "non-kernel", highlight: false },
+                    { rule: "T &rarr; &middot; id", type: "non-kernel", highlight: false }
+                ],
+                arrowSymbol: "E",
+                targetActive: true,
+                targetTitle: "狀態集 I₁ (核心)",
+                targetItems: [
+                    { rule: "E' &rarr; E &middot;", type: "kernel", highlight: true, note: "圓點已右移一格" },
+                    { rule: "E &rarr; E &middot; + T", type: "kernel", highlight: true, note: "圓點已右移一格" }
+                ],
+                targetBadge: "KERNEL GENERATED"
+            },
+            {
+                desc: "<b>步驟 6 - 計算 GOTO 目標集的閉包 (CLOSURE)：</b>根據 GOTO 函數的嚴謹數學定義：<code>GOTO(I, X) = CLOSURE({ 圓點右移項目 })</code>。我們必須對新生成的兩個核項目進行閉包運算。檢查這兩個項目，圓點右側分別為空、以及終端符號 <code>+</code>。由於沒有圓點緊接非終端符號的項目，因此閉包無須引入任何新項目。<code>I₁</code> 的建構完成。",
+                opStatus: "求取 GOTO 結果集之閉包",
+                formula: "GOTO(I₀, E) = CLOSURE({ E' &rarr; E &middot;, E &rarr; E &middot; + T }) = I₁",
+                i0Badge: "DFA STATE I₀",
+                i0Items: [
+                    { rule: "E' &rarr; &middot; E", type: "kernel", highlight: false },
+                    { rule: "E &rarr; &middot; E + T", type: "non-kernel", highlight: false },
+                    { rule: "E &rarr; &middot; T", type: "non-kernel", highlight: false },
+                    { rule: "T &rarr; &middot; id", type: "non-kernel", highlight: false }
+                ],
+                arrowSymbol: "E",
+                targetActive: true,
+                targetTitle: "狀態集 I₁ (DFA STATE I₁)",
+                targetItems: [
+                    { rule: "E' &rarr; E &middot;", type: "kernel", highlight: false },
+                    { rule: "E &rarr; E &middot; + T", type: "kernel", highlight: false }
+                ],
+                targetBadge: "DFA STATE I₁"
+            },
+            {
+                desc: "<b>步驟 7 - 另一條轉移路徑 GOTO(I₀, T)：</b>我們換個方向。若剖析器在 <code>I₀</code> 狀態下讀入的是非終端符號 <code>T</code>。在 <code>I₀</code> 中，唯有 <code>E &rarr; &middot; T</code> 的圓點緊鄰 <code>T</code>。執行 <code>GOTO(I₀, T)</code>，將圓點右移得到核項目 <code>E &rarr; T &middot;</code>。同理求其閉包，無須擴展，直接確立為新狀態 <code>I₂</code>。",
+                opStatus: "GOTO(I₀, T) 狀態轉移",
+                formula: "GOTO(I₀, T) = CLOSURE({ E &rarr; T &middot; }) = I₂",
+                i0Badge: "DFA STATE I₀",
+                i0Items: [
+                    { rule: "E' &rarr; &middot; E", type: "kernel", highlight: false },
+                    { rule: "E &rarr; &middot; E + T", type: "non-kernel", highlight: false },
+                    { rule: "E &rarr; &middot; T", type: "non-kernel", highlight: true, note: "選取：圓點後為 T" },
+                    { rule: "T &rarr; &middot; id", type: "non-kernel", highlight: false }
+                ],
+                arrowSymbol: "T",
+                targetActive: true,
+                targetTitle: "狀態集 I₂ (DFA STATE I₂)",
+                targetItems: [
+                    { rule: "E &rarr; T &middot;", type: "kernel", highlight: false }
+                ],
+                targetBadge: "DFA STATE I₂"
+            },
+            {
+                desc: "<b>步驟 8 - 理論與實務效益總結：</b>這套 <code>CLOSURE</code> 與 <code>GOTO</code> 機制是 LR 分析法的基石。透過將無狀態的 CFG 改寫為項目，並經由閉包和轉移，我們建立了一個識別可行前綴（Viable Prefixes）的 **DFA 自動機**。這張 DFA 圖將直接對應到 ACTION/GOTO 查表矩陣，讓剖析器在由左至右掃描時，能無回溯、無二義性地進行極速移進與歸約判定。",
+                opStatus: "LR(0) 有限狀態自動機核心優勢",
+                formula: "DFA 狀態集與移位轉移直接映射為 LR 分析表",
+                i0Badge: "DFA STATE I₀",
+                i0Items: [
+                    { rule: "E' &rarr; &middot; E", type: "kernel", highlight: false },
+                    { rule: "E &rarr; &middot; E + T", type: "non-kernel", highlight: false },
+                    { rule: "E &rarr; &middot; T", type: "non-kernel", highlight: false },
+                    { rule: "T &rarr; &middot; id", type: "non-kernel", highlight: false }
+                ],
+                arrowSymbol: "X",
+                targetActive: true,
+                targetTitle: "GOTO (I₀, X)",
+                targetItems: [
+                    { rule: "DFA 狀態轉移成果", type: "kernel", highlight: true, note: "決定 LR 分析表的所有動作" }
+                ],
+                targetBadge: "DFA AUTOMATON"
+            }
+        ];
+
+        let currentIndex = 0;
+
+        // 初始化演示
+        function initDemo() {
+            currentIndex = 0;
+            renderStep();
+        }
+
+        // 渲染單個步驟
+        function renderStep() {
+            const step = stepsData[currentIndex];
+            const totalSteps = stepsData.length;
+
+            // 1. 更新進度與說明文字
+            document.getElementById("step-badge").textContent = `步驟 ${currentIndex + 1} / ${totalSteps}`;
+            document.getElementById("step-desc").innerHTML = step.desc;
+
+            // 2. 渲染進度條點
+            const dotsContainer = document.getElementById("step-dots-container");
+            dotsContainer.innerHTML = "";
+            for (let i = 0; i < totalSteps; i++) {
+                const dot = document.createElement("div");
+                if (i === currentIndex) {
+                    dot.className = "step-pill h-1.5 flex-grow rounded-full bg-blue-600 transition-all-custom";
+                } else if (i < currentIndex) {
+                    dot.className = "step-pill h-1.5 flex-grow rounded-full bg-blue-300 transition-all-custom";
+                } else {
+                    dot.className = "step-pill h-1.5 flex-grow rounded-full bg-slate-200 transition-all-custom";
+                }
+                dotsContainer.appendChild(dot);
+            }
+
+            // 3. 限制按鈕狀態
+            const prevBtn = document.getElementById("btn-prev");
+            const nextBtn = document.getElementById("btn-next");
+
+            if (currentIndex === 0) {
+                prevBtn.disabled = true;
+                prevBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200";
+            } else {
+                prevBtn.disabled = false;
+                prevBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200";
+            }
+
+            if (currentIndex === totalSteps - 1) {
+                nextBtn.disabled = true;
+                nextBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-slate-200 text-slate-400 text-sm font-medium cursor-not-allowed transition-all duration-200";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm";
+            }
+
+            // 4. 更新狀態與公式看板
+            document.getElementById("current-op-status").textContent = step.opStatus;
+            document.getElementById("math-eval-formula").innerHTML = `GOTO & CLOSURE 公式判定：<span class="text-amber-400 font-bold font-mono text-[11px]">${step.formula}</span>`;
+
+            // 5. 渲染狀態集 I₀ 的內部項目
+            document.getElementById("i0-type-badge").textContent = step.i0Badge;
+            const i0Container = document.getElementById("i0-items-list");
+            i0Container.innerHTML = "";
+
+            step.i0Items.forEach(item => {
+                const row = document.createElement("div");
+                row.className = "item-row flex justify-between items-center py-2 px-3 rounded border font-mono text-xs transition-all-custom " + 
+                                (item.highlight ? "highlight border-blue-500 bg-blue-950/40 text-blue-300" : "border-slate-800 bg-slate-950 text-slate-400");
+                
+                const ruleSpan = document.createElement("span");
+                ruleSpan.className = "font-bold";
+                ruleSpan.innerHTML = item.rule;
+
+                row.appendChild(ruleSpan);
+
+                if (item.note) {
+                    const noteSpan = document.createElement("span");
+                    noteSpan.className = "text-[9px] px-2 py-0.5 rounded " + (item.type === "kernel" ? "bg-slate-800 text-slate-400" : "bg-blue-900/40 text-blue-400");
+                    noteSpan.innerHTML = item.note;
+                    row.appendChild(noteSpan);
+                }
+
+                i0Container.appendChild(row);
+            });
+
+            // 6. 更新轉移箭頭符號
+            document.getElementById("transition-symbol-display").textContent = step.arrowSymbol;
+
+            // 7. 渲染轉移目標集
+            const targetBox = document.getElementById("state-target-box");
+            document.getElementById("target-state-title").textContent = step.targetTitle;
+            document.getElementById("target-type-badge").textContent = step.targetBadge;
+
+            if (step.targetActive) {
+                targetBox.className = "border rounded-xl p-4 bg-slate-950/80 w-full transition-all-custom opacity-100 scale-105 border-emerald-500 shadow-lg shadow-emerald-950/20";
+                
+                const targetContainer = document.getElementById("target-items-list");
+                targetContainer.innerHTML = "";
+
+                step.targetItems.forEach(item => {
+                    const row = document.createElement("div");
+                    row.className = "item-row flex justify-between items-center py-2 px-3 rounded border border-emerald-800 bg-emerald-950/40 text-emerald-300 font-mono text-xs transition-all-custom";
+                    
+                    const ruleSpan = document.createElement("span");
+                    ruleSpan.className = "font-bold";
+                    ruleSpan.innerHTML = item.rule;
+
+                    const noteSpan = document.createElement("span");
+                    noteSpan.className = "text-[9px] bg-emerald-900/60 text-emerald-400 px-2 py-0.5 rounded";
+                    noteSpan.innerHTML = item.note;
+
+                    row.appendChild(ruleSpan);
+                    row.appendChild(noteSpan);
+                    targetContainer.appendChild(row);
+                });
+            } else {
+                targetBox.className = "border rounded-xl p-4 bg-slate-950/80 w-full transition-all-custom opacity-20 scale-95 border-slate-800";
+                const targetContainer = document.getElementById("target-items-list");
+                targetContainer.innerHTML = '<div class="text-slate-600 italic py-2 text-center">轉移未啟動</div>';
+            }
+        }
+
+        // 互動函數：下一步
+        function nextStep() {
+            if (currentIndex < stepsData.length - 1) {
+                currentIndex++;
+                renderStep();
+            }
+        }
+
+        // 互動函數：上一步
+        function prevStep() {
+            if (currentIndex > 0) {
+                currentIndex--;
+                renderStep();
+            }
+        }
+
+        // 重置
+        function resetDemo() {
+            initDemo();
+        }
+
+        // 頁面載入完成後執行
+        window.onload = function() {
+            initDemo();
+        };
+    </script>
+</body>
+</html>

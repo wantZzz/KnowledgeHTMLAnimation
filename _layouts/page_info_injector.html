@@ -54,7 +54,7 @@
 	</div>
 
 	<div class="pii-actions-zone">
-		<button href="{{ page.dir | append: "/" | replace: "//", "/" | relative_url }}" class="pii-back-btn">← 回上一頁</button>
+		<button onclick="location.href='{{ page.dir | append: "/" | replace: "//", "/" | relative_url }}'" class="pii-back-btn">← 回到目錄</button>
 	</div>
 </div>
 

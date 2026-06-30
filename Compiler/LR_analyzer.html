@@ -1,0 +1,670 @@
+---
+layout: page_info_injector
+title: "[Chapter 4.5 & 4.6] LR 語法分析器運作示範"
+description: "用於直接展示 LR 語法分析器運作流程與轉移表在分析中的輔助功用。"
+role: "supplementary"
+related: []
+tags: ["移動端友善"]
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LR 語法分析器移進歸約與堆疊動態模擬</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .transition-all-custom {
+            transition: all 0.3s ease-in-out;
+        }
+        .stack-item {
+            animation: slideIn 0.25s ease-out forwards;
+        }
+        @keyframes slideIn {
+            from { transform: translateY(-15px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .table-cell-highlight {
+            background-color: rgba(245, 158, 11, 0.15) !important;
+            color: #d97706 !important;
+            font-weight: bold;
+            border: 2px solid #f59e0b !important;
+        }
+        .tree-node {
+            transition: transform 0.4s ease-in-out, opacity 0.4s ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col justify-between">
+
+    <!-- 頁首 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6 shadow-sm">
+        <div class="max-w-6xl mx-auto flex items-center justify-between">
+            <h1 class="text-xl font-bold tracking-tight text-slate-900">編譯器設計：LR 移進-歸約分析與堆疊狀態追蹤</h1>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-mono">Chapter 4.5 & 4.6</span>
+        </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="max-w-6xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
+        
+        <!-- 左側控制面板與判定說明 -->
+        <section class="lg:col-span-5 flex flex-col gap-4">
+            
+            <!-- 演示用文法規則 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">當前剖析用增廣文法</h2>
+                <div class="grid grid-cols-3 gap-2 font-mono text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                    <div>(1) E &rarr; E + T</div>
+                    <div>(2) E &rarr; T</div>
+                    <div>(3) T &rarr; id</div>
+                </div>
+            </div>
+
+            <!-- 核心逐步說明面板 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between min-h-[300px]">
+                <div>
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-bold text-slate-900 text-sm">剖析執行進度與決策</h3>
+                        <span id="step-badge" class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-mono">步驟 1 / 9</span>
+                    </div>
+
+                    <!-- 步驟進度條 -->
+                    <div class="flex gap-1 mb-4" id="step-dots-container">
+                        <!-- 動態生成步驟點 -->
+                    </div>
+                    
+                    <div class="prose prose-sm text-slate-600 leading-relaxed min-h-[140px]" id="step-desc">
+                        載入中...
+                    </div>
+                </div>
+
+                <!-- 互動控制按鈕 -->
+                <div class="border-t border-slate-100 pt-4 mt-6 flex items-center justify-between gap-3">
+                    <button id="btn-prev" onclick="prevStep()" class="flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                        上一步 (Prev)
+                    </button>
+                    <button id="btn-next" onclick="nextStep()" class="flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm">
+                        下一步 (Next)
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 分析棧 (Parser Stack) 可視化 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col min-h-[220px]">
+                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                    <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+                    <span>分析棧 (Stack 狀態)</span>
+                </div>
+                <!-- 雙軌堆疊：包含狀態與符號對稱交替 -->
+                <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 flex flex-col-reverse justify-start gap-1.5 flex-grow font-mono overflow-y-auto" id="stack-container">
+                    <!-- JS 動態更新 stack -->
+                </div>
+                <div class="text-[10px] text-slate-400 mt-2 text-right font-mono">Stack Bottom: 狀態 0</div>
+            </div>
+
+        </section>
+
+        <!-- 右側視覺化與模擬畫布 -->
+        <section class="lg:col-span-7 flex flex-col gap-4">
+            
+            <!-- 待分析輸入字串與 Lookahead -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">輸入緩衝區與 Lookahead 指標</div>
+                <div class="flex items-center gap-3 py-3 bg-slate-900 rounded-lg justify-center overflow-x-auto" id="input-stream-container">
+                    <!-- JS 動態更新 -->
+                </div>
+            </div>
+
+            <!-- ACTION / GOTO 轉移表 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">LR 剖析決策轉移表 (ACTION / GOTO Table)</div>
+                <div class="overflow-x-auto text-[10px] font-mono">
+                    <table class="w-full border-collapse border border-slate-200 text-center">
+                        <thead>
+                            <tr class="bg-slate-100 text-slate-600 font-bold text-xs">
+                                <th class="border border-slate-200 p-2" rowspan="2">棧頂狀態</th>
+                                <th class="border border-slate-200 p-2" colspan="3">ACTION (終端符號)</th>
+                                <th class="border border-slate-200 p-2" colspan="2">GOTO (非終端)</th>
+                            </tr>
+                            <tr class="bg-slate-50 text-slate-500 font-bold text-xs">
+                                <th class="border border-slate-200 p-1.5">id</th>
+                                <th class="border border-slate-200 p-1.5">+</th>
+                                <th class="border border-slate-200 p-1.5">$</th>
+                                <th class="border border-slate-200 p-1.5">E</th>
+                                <th class="border border-slate-200 p-1.5">T</th>
+                            </tr>
+                        </thead>
+                        <tbody id="parsing-table-body">
+                            <!-- 查表表格狀態動態渲染 -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 動態語法分析樹建構結果 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex-grow flex flex-col justify-between min-h-[280px]">
+                <div class="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                        <span class="font-bold text-slate-900 text-sm">動態語法剖析樹建立狀態 (歸約時向上生長)</span>
+                    </div>
+                    <span id="tree-status-badge" class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono">準備開始</span>
+                </div>
+
+                <!-- SVG 畫布 -->
+                <div class="bg-slate-50 rounded-lg border border-slate-100 flex items-center justify-center flex-grow p-4">
+                    <svg id="parse-tree-svg" class="w-full h-[220px]" viewBox="0 0 460 220">
+                        <!-- 動態繪製分析樹 -->
+                    </svg>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- 頁尾 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500">
+        <div class="max-w-6xl mx-auto">
+             編譯器設計課程輔助學術軟體 - LR 分析器動態追蹤
+        </div>
+    </footer>
+
+    <script>
+        // 定義 SLR 動作常數 (繁體中文描述)
+        const ACTION_TABLE = {
+            0: { id: "移進至狀態 3", plus: "", s: "", e: "轉移至狀態 1", t: "轉移至狀態 2" },
+            1: { id: "", plus: "移進至狀態 4", s: "宣告接受", e: "", t: "" },
+            2: { id: "", plus: "依規則 (2) 歸約", s: "依規則 (2) 歸約", e: "", t: "" },
+            3: { id: "", plus: "依規則 (3) 歸約", s: "依規則 (3) 歸約", e: "", t: "" },
+            4: { id: "移進至狀態 3", plus: "", s: "", e: "", t: "轉移至狀態 5" },
+            5: { id: "", plus: "依規則 (1) 歸約", s: "依規則 (1) 歸約", e: "", t: "" }
+        };
+
+        // 逐步操作數據設定
+        const stepsData = [
+            {
+                desc: "<b>步驟 1 - 剖析初始化：</b>準備分析輸入字串 <code>id + id $</code>。分析棧內已壓入初始狀態 <code>0</code>。當前 Lookahead 符號對準第一個 <code>id</code>。剖析器查閱轉移表：狀態 <code>0</code> 遇 <code>id</code>，對應動作為 <code>移進至狀態 3</code>。",
+                pointer: 0,
+                stack: [
+                    { type: "state", val: "0" }
+                ],
+                tableHighlight: { r: 0, c: "id" },
+                treeStatus: "初始化中",
+                treeNodes: [
+                    { id: "id1", label: "id", x: 100, y: 180, type: "leaf", visible: true },
+                    { id: "plus", label: "+", x: 230, y: 180, type: "leaf", visible: true },
+                    { id: "id2", label: "id", x: 360, y: 180, type: "leaf", visible: true }
+                ],
+                treeEdges: []
+            },
+            {
+                desc: "<b>步驟 2 - 移進第一個 id 及其狀態：</b>剖析器執行移進動作。將當前 Lookahead 符號 <code>id</code> 壓入棧，並依轉移表指示，將新狀態 <code>3</code> 壓入棧頂。Lookahead 指標向右移動至 <code>+</code> 號。查表：狀態 <code>3</code> 遇 <code>+</code>，動作為 <code>依規則 (3) 歸約</code>。",
+                pointer: 1,
+                stack: [
+                    { type: "state", val: "0" },
+                    { type: "symbol", val: "id" },
+                    { type: "state", val: "3" }
+                ],
+                tableHighlight: { r: 3, c: "plus" },
+                treeStatus: "移進成功",
+                treeNodes: [
+                    { id: "id1", label: "id", x: 100, y: 180, type: "leaf", visible: true, active: true },
+                    { id: "plus", label: "+", x: 230, y: 180, type: "leaf", visible: true },
+                    { id: "id2", label: "id", x: 360, y: 180, type: "leaf", visible: true }
+                ],
+                treeEdges: []
+            },
+            {
+                desc: "<b>步驟 3 - 依規則 (3) 歸約 T &rarr; id：</b>準備套用 <code>T &rarr; id</code> 歸約。規則主體長度為 1。剖析器自棧頂彈出 1 個狀態與 1 個符號（彈出 <code>3</code> 與 <code>id</code>），暴露的棧頂狀態為 <code>0</code>。查閱 GOTO 表：<code>GOTO[0, T] = 轉移至狀態 2</code>。將非終端 <code>T</code> 與新狀態 <code>2</code> 壓回棧頂。在語法樹中，<code>id</code> 向上與新建立的 <code>T</code> 節點連接。",
+                pointer: 1,
+                stack: [
+                    { type: "state", val: "0" },
+                    { type: "symbol", val: "T" },
+                    { type: "state", val: "2" }
+                ],
+                tableHighlight: { r: 0, c: "t" },
+                treeStatus: "歸約中 (T &rarr; id)",
+                treeNodes: [
+                    { id: "id1", label: "id", x: 100, y: 180, type: "leaf", visible: true },
+                    { id: "plus", label: "+", x: 230, y: 180, type: "leaf", visible: true },
+                    { id: "id2", label: "id", x: 360, y: 180, type: "leaf", visible: true },
+                    { id: "t1", label: "T", x: 100, y: 120, type: "nonterminal", visible: true, active: true }
+                ],
+                treeEdges: [
+                    { from: "t1", to: "id1" }
+                ]
+            },
+            {
+                desc: "<b>步驟 4 - 依規則 (2) 歸約 E &rarr; T：</b>棧頂狀態為 <code>2</code>，Lookahead 仍為 <code>+</code>。查表得知動作為 <code>依規則 (2) 歸約</code>。主體長度為 1，彈出狀態 <code>2</code> 與符號 <code>T</code>，暴露的棧頂狀態為 <code>0</code>。查閱 GOTO 表：<code>GOTO[0, E] = 轉移至狀態 1</code>。將非終端 <code>E</code> 與狀態 <code>1</code> 壓回棧頂。語法樹中，<code>T</code> 向上延伸與 <code>E</code> 節點連接。",
+                pointer: 1,
+                stack: [
+                    { type: "state", val: "0" },
+                    { type: "symbol", val: "E" },
+                    { type: "state", val: "1" }
+                ],
+                tableHighlight: { r: 0, c: "e" },
+                treeStatus: "歸約中 (E &rarr; T)",
+                treeNodes: [
+                    { id: "id1", label: "id", x: 100, y: 180, type: "leaf", visible: true },
+                    { id: "plus", label: "+", x: 230, y: 180, type: "leaf", visible: true },
+                    { id: "id2", label: "id", x: 360, y: 180, type: "leaf", visible: true },
+                    { id: "t1", label: "T", x: 100, y: 120, type: "nonterminal", visible: true },
+                    { id: "e1", label: "E", x: 100, y: 60, type: "nonterminal", visible: true, active: true }
+                ],
+                treeEdges: [
+                    { from: "t1", to: "id1" },
+                    { from: "e1", to: "t1" }
+                ]
+            },
+            {
+                desc: "<b>步驟 5 - 移進 + 號與其狀態：</b>棧頂狀態為 <code>1</code>，Lookahead 為 <code>+</code>。查表動作為 <code>移進至狀態 4</code>。剖析器將符號 <code>+</code> 與新狀態 <code>4</code> 壓入棧中，Lookahead 指針右移至第二個 <code>id</code>。查表：狀態 <code>4</code> 遇 <code>id</code>，動作為 <code>移進至狀態 3</code>。",
+                pointer: 2,
+                stack: [
+                    { type: "state", val: "0" },
+                    { type: "symbol", val: "E" },
+                    { type: "state", val: "1" },
+                    { type: "symbol", val: "+" },
+                    { type: "state", val: "4" }
+                ],
+                tableHighlight: { r: 4, c: "id" },
+                treeStatus: "移進成功 (+)",
+                treeNodes: [
+                    { id: "id1", label: "id", x: 100, y: 180, type: "leaf", visible: true },
+                    { id: "plus", label: "+", x: 230, y: 180, type: "leaf", visible: true, active: true },
+                    { id: "id2", label: "id", x: 360, y: 180, type: "leaf", visible: true },
+                    { id: "t1", label: "T", x: 100, y: 120, type: "nonterminal", visible: true },
+                    { id: "e1", label: "E", x: 100, y: 60, type: "nonterminal", visible: true }
+                ],
+                treeEdges: [
+                    { from: "t1", to: "id1" },
+                    { from: "e1", to: "t1" }
+                ]
+            },
+            {
+                desc: "<b>步驟 6 - 移進第二個 id 及其狀態：</b>執行移進。將 <code>id</code> 與新狀態 <code>3</code> 壓入棧中。Lookahead 指標右移至結束標記 <code>$</code>。查表：狀態 <code>3</code> 遇 <code>$</code>，動作為 <code>依規則 (3) 歸約</code>。",
+                pointer: 3,
+                stack: [
+                    { type: "state", val: "0" },
+                    { type: "symbol", val: "E" },
+                    { type: "state", val: "1" },
+                    { type: "symbol", val: "+" },
+                    { type: "state", val: "4" },
+                    { type: "symbol", val: "id" },
+                    { type: "state", val: "3" }
+                ],
+                tableHighlight: { r: 3, c: "s" },
+                treeStatus: "移進成功 (id)",
+                treeNodes: [
+                    { id: "id1", label: "id", x: 100, y: 180, type: "leaf", visible: true },
+                    { id: "plus", label: "+", x: 230, y: 180, type: "leaf", visible: true },
+                    { id: "id2", label: "id", x: 360, y: 180, type: "leaf", visible: true, active: true },
+                    { id: "t1", label: "T", x: 100, y: 120, type: "nonterminal", visible: true },
+                    { id: "e1", label: "E", x: 100, y: 60, type: "nonterminal", visible: true }
+                ],
+                treeEdges: [
+                    { from: "t1", to: "id1" },
+                    { from: "e1", to: "t1" }
+                ]
+            },
+            {
+                desc: "<b>步驟 7 - 依規則 (3) 歸約 T &rarr; id：</b>準備將棧頂 <code>id</code> 歸約。彈出狀態 <code>3</code> 與符號 <code>id</code>，暴露的棧頂狀態為 <code>4</code>。查閱 GOTO 表：<code>GOTO[4, T] = 轉移至狀態 5</code>。將非終端 <code>T</code> 與新狀態 <code>5</code> 壓入棧頂。在語法樹中，第二個 <code>id</code> 與新建立的第二個 <code>T</code> 節點連接。",
+                pointer: 3,
+                stack: [
+                    { type: "state", val: "0" },
+                    { type: "symbol", val: "E" },
+                    { type: "state", val: "1" },
+                    { type: "symbol", val: "+" },
+                    { type: "state", val: "4" },
+                    { type: "symbol", val: "T" },
+                    { type: "state", val: "5" }
+                ],
+                tableHighlight: { r: 4, c: "t" },
+                treeStatus: "歸約中 (T &rarr; id)",
+                treeNodes: [
+                    { id: "id1", label: "id", x: 100, y: 180, type: "leaf", visible: true },
+                    { id: "plus", label: "+", x: 230, y: 180, type: "leaf", visible: true },
+                    { id: "id2", label: "id", x: 360, y: 180, type: "leaf", visible: true },
+                    { id: "t1", label: "T", x: 100, y: 120, type: "nonterminal", visible: true },
+                    { id: "e1", label: "E", x: 100, y: 60, type: "nonterminal", visible: true },
+                    { id: "t2", label: "T", x: 360, y: 120, type: "nonterminal", visible: true, active: true }
+                ],
+                treeEdges: [
+                    { from: "t1", to: "id1" },
+                    { from: "e1", to: "t1" },
+                    { from: "t2", to: "id2" }
+                ]
+            },
+            {
+                desc: "<b>步驟 8 - 依規則 (1) 歸約 E &rarr; E + T：</b>棧頂狀態為 <code>5</code>，Lookahead 為 <code>$</code>。查表動作為 <code>依規則 (1) 歸約</code>。主體長度為 3。剖析器彈出 3 個狀態與 3 個符號（彈出 <code>5, T, 4, +, 1, E</code>），暴露的棧頂狀態為 <code>0</code>。查閱 GOTO 表：<code>GOTO[0, E] = 轉移至狀態 1</code>。將非終端 <code>E</code> 與狀態 <code>1</code> 壓回棧頂。語法樹中，<code>E</code>、<code>+</code>、<code>T</code> 三個節點向上與新的根節點 <code>E</code> 連接。",
+                pointer: 3,
+                stack: [
+                    { type: "state", val: "0" },
+                    { type: "symbol", val: "E" },
+                    { type: "state", val: "1" }
+                ],
+                tableHighlight: { r: 0, c: "e" },
+                treeStatus: "歸約中 (E &rarr; E + T)",
+                treeNodes: [
+                    { id: "id1", label: "id", x: 100, y: 180, type: "leaf", visible: true },
+                    { id: "plus", label: "+", x: 230, y: 180, type: "leaf", visible: true },
+                    { id: "id2", label: "id", x: 360, y: 180, type: "leaf", visible: true },
+                    { id: "t1", label: "T", x: 100, y: 120, type: "nonterminal", visible: true },
+                    { id: "e1", label: "E", x: 100, y: 120, type: "nonterminal", visible: true },
+                    { id: "t2", label: "T", x: 360, y: 120, type: "nonterminal", visible: true },
+                    { id: "e_root", label: "E", x: 230, y: 40, type: "nonterminal", visible: true, active: true }
+                ],
+                treeEdges: [
+                    { from: "t1", to: "id1" },
+                    { from: "t2", to: "id2" },
+                    { from: "e_root", to: "e1" },
+                    { from: "e_root", to: "plus" },
+                    { from: "e_root", to: "t2" }
+                ]
+            },
+            {
+                desc: "<b>步驟 9 - 宣告接受，剖析成功：</b>棧頂狀態為 <code>1</code>，Lookahead 符號為結束標記 <code>$</code>。查閱 ACTION 表，對應動作為 <code>宣告接受</code>。剖析器成功完成最右推導的反向還原，產出了一棵完整合法的語法剖析樹。",
+                pointer: 4,
+                stack: [
+                    { type: "state", val: "0" },
+                    { type: "symbol", val: "E" },
+                    { type: "state", val: "1" }
+                ],
+                tableHighlight: { r: 1, c: "s" },
+                treeStatus: "剖析成功完成",
+                treeNodes: [
+                    { id: "id1", label: "id", x: 100, y: 180, type: "leaf", visible: true },
+                    { id: "plus", label: "+", x: 230, y: 180, type: "leaf", visible: true },
+                    { id: "id2", label: "id", x: 360, y: 180, type: "leaf", visible: true },
+                    { id: "t1", label: "T", x: 100, y: 120, type: "nonterminal", visible: true },
+                    { id: "e1", label: "E", x: 100, y: 120, type: "nonterminal", visible: true },
+                    { id: "t2", label: "T", x: 360, y: 120, type: "nonterminal", visible: true },
+                    { id: "e_root", label: "E", x: 230, y: 40, type: "nonterminal", visible: true, highlight: true }
+                ],
+                treeEdges: [
+                    { from: "t1", to: "id1" },
+                    { from: "t2", to: "id2" },
+                    { from: "e_root", to: "e1" },
+                    { from: "e_root", to: "plus" },
+                    { from: "e_root", to: "t2" }
+                ]
+            }
+        ];
+
+        let currentIndex = 0;
+
+        // 初始化
+        function initDemo() {
+            currentIndex = 0;
+            renderStep();
+        }
+
+        // 渲染單個步驟
+        function renderStep() {
+            const step = stepsData[currentIndex];
+            const totalSteps = stepsData.length;
+
+            // 1. 更新控制與進度文字
+            document.getElementById("step-badge").textContent = `步驟 ${currentIndex + 1} / ${totalSteps}`;
+            document.getElementById("step-desc").innerHTML = step.desc;
+
+            // 2. 渲染步驟指示器 (Dot indicators)
+            const dotsContainer = document.getElementById("step-dots-container");
+            dotsContainer.innerHTML = "";
+            for (let i = 0; i < totalSteps; i++) {
+                const dot = document.createElement("div");
+                if (i === currentIndex) {
+                    dot.className = "step-pill h-1.5 flex-grow rounded-full bg-blue-600 transition-all-custom";
+                } else if (i < currentIndex) {
+                    dot.className = "step-pill h-1.5 flex-grow rounded-full bg-blue-300 transition-all-custom";
+                } else {
+                    dot.className = "step-pill h-1.5 flex-grow rounded-full bg-slate-200 transition-all-custom";
+                }
+                dotsContainer.appendChild(dot);
+            }
+
+            // 3. 按鈕限制處理
+            const prevBtn = document.getElementById("btn-prev");
+            const nextBtn = document.getElementById("btn-next");
+
+            if (currentIndex === 0) {
+                prevBtn.disabled = true;
+                prevBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200";
+            } else {
+                prevBtn.disabled = false;
+                prevBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200";
+            }
+
+            if (currentIndex === totalSteps - 1) {
+                nextBtn.disabled = true;
+                nextBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-slate-200 text-slate-400 text-sm font-medium cursor-not-allowed transition-all duration-200";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm";
+            }
+
+            // 4. 渲染輸入緩衝區 (Input Stream)
+            const inputTokens = ["id", "+", "id", "$"];
+            const streamContainer = document.getElementById("input-stream-container");
+            streamContainer.innerHTML = "";
+
+            inputTokens.forEach((tk, idx) => {
+                const wrapper = document.createElement("div");
+                wrapper.className = "flex flex-col items-center gap-1 transition-all-custom";
+
+                const tokenCard = document.createElement("div");
+                let baseStyle = "px-4 py-2 rounded font-mono text-xs font-bold border transition-all-custom ";
+                
+                if (idx === step.pointer) {
+                    baseStyle += "bg-blue-600 text-white border-blue-400 shadow-lg scale-105 ring-2 ring-amber-400 ring-offset-2 ring-offset-slate-950";
+                } else if (idx < step.pointer) {
+                    baseStyle += "bg-slate-800 text-slate-500 border-slate-700 line-through opacity-40";
+                } else {
+                    baseStyle += "bg-slate-800 text-slate-300 border-slate-700";
+                }
+
+                tokenCard.className = baseStyle;
+                tokenCard.innerHTML = tk;
+
+                const indicator = document.createElement("span");
+                indicator.className = "text-[9px] font-mono ";
+                if (idx === step.pointer) {
+                    indicator.className += "text-amber-400 font-bold";
+                    indicator.textContent = "Lookahead";
+                } else if (idx < step.pointer) {
+                    indicator.className += "text-slate-600";
+                    indicator.textContent = "Consumed";
+                } else {
+                    indicator.className += "text-slate-500";
+                    indicator.textContent = "Pending";
+                }
+
+                wrapper.appendChild(tokenCard);
+                wrapper.appendChild(indicator);
+                streamContainer.appendChild(wrapper);
+            });
+
+            // 5. 渲染剖析棧 (Parser Stack)
+            const stackContainer = document.getElementById("stack-container");
+            stackContainer.innerHTML = "";
+
+            step.stack.forEach(item => {
+                const div = document.createElement("div");
+                if (item.type === "state") {
+                    div.className = "stack-item text-center py-1.5 rounded text-xs font-bold border border-slate-800 bg-slate-800 text-amber-400";
+                    div.innerHTML = `<span class="text-slate-400 font-normal">狀態 </span>${item.val}`;
+                } else {
+                    div.className = "stack-item text-center py-1.5 rounded text-xs font-bold border border-slate-800 bg-blue-950 text-blue-300";
+                    div.innerHTML = `<span class="text-slate-500 font-normal">符號 </span>${item.val}`;
+                }
+                stackContainer.appendChild(div);
+            });
+
+            // 6. 渲染 ACTION/GOTO 表格
+            renderParsingTable(step);
+
+            // 7. 渲染語法樹
+            renderParseTree(step);
+        }
+
+        // 渲染分析表
+        function renderParsingTable(step) {
+            const tableBody = document.getElementById("parsing-table-body");
+            tableBody.innerHTML = "";
+
+            for (let i = 0; i <= 5; i++) {
+                const tr = document.createElement("tr");
+                tr.className = i % 2 === 0 ? "bg-white" : "bg-slate-50";
+
+                const tdState = document.createElement("td");
+                tdState.className = "border border-slate-200 p-2 font-bold bg-slate-100 text-slate-700 text-xs";
+                tdState.textContent = `${i} (I${i})`;
+                tr.appendChild(tdState);
+
+                const columns = ["id", "plus", "s", "e", "t"];
+                columns.forEach(col => {
+                    const td = document.createElement("td");
+                    td.className = "border border-slate-200 p-2 text-xs transition-all-custom";
+                    td.textContent = ACTION_TABLE[i][col];
+
+                    if (step.tableHighlight && step.tableHighlight.r === i && step.tableHighlight.c === col) {
+                        td.className += " table-cell-highlight";
+                    }
+                    tr.appendChild(td);
+                });
+
+                tableBody.appendChild(tr);
+            }
+        }
+
+        // 語法分析樹 SVG 渲染引擎
+        function renderParseTree(step) {
+            const svg = document.getElementById("parse-tree-svg");
+            svg.innerHTML = ""; // 清空舊畫布
+            
+            document.getElementById("tree-status-badge").textContent = step.treeStatus;
+
+            // 1. 繪製連線 (Edges)
+            step.treeEdges.forEach(edge => {
+                const fromNode = step.treeNodes.find(n => n.id === edge.from);
+                const toNode = step.treeNodes.find(n => n.id === edge.to);
+
+                if (fromNode && toNode && fromNode.visible && toNode.visible) {
+                    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    line.setAttribute("x1", fromNode.x);
+                    line.setAttribute("y1", fromNode.y);
+                    line.setAttribute("x2", toNode.x);
+                    line.setAttribute("y2", toNode.y);
+
+                    if (edge.highlight) {
+                        line.setAttribute("stroke", "#3b82f6");
+                        line.setAttribute("stroke-width", "2.5");
+                    } else {
+                        line.setAttribute("stroke", "#cbd5e1");
+                        line.setAttribute("stroke-width", "1.5");
+                    }
+                    svg.appendChild(line);
+                }
+            });
+
+            // 2. 繪製節點 (Nodes)
+            step.treeNodes.forEach(node => {
+                if (!node.visible) return;
+
+                const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                group.setAttribute("class", "tree-node transition-all-custom");
+
+                let fill = "#ffffff";
+                let stroke = "#64748b";
+                let strokeWidth = "1.2";
+                let textColor = "#0f172a";
+                let weight = "normal";
+
+                const radiusW = 44;
+                const radiusH = 24;
+
+                if (node.type === "leaf") {
+                    fill = "#f8fafc";
+                    stroke = "#475569";
+                    weight = "bold";
+                } else if (node.type === "nonterminal") {
+                    fill = "#f0fdf4";
+                    stroke = "#16a34a";
+                    textColor = "#15803d";
+                    weight = "bold";
+                }
+
+                if (node.active) {
+                    fill = "#fff7ed";
+                    stroke = "#f97316";
+                    textColor = "#ea580c";
+                    strokeWidth = "2";
+                }
+
+                if (node.highlight) {
+                    fill = "#eff6ff";
+                    stroke = "#2563eb";
+                    strokeWidth = "2";
+                    textColor = "#1e40af";
+                    weight = "bold";
+                }
+
+                // 繪製圓角矩形
+                const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                rect.setAttribute("x", node.x - radiusW / 2);
+                rect.setAttribute("y", node.y - radiusH / 2);
+                rect.setAttribute("width", radiusW);
+                rect.setAttribute("height", radiusH);
+                rect.setAttribute("rx", "4");
+                rect.setAttribute("fill", fill);
+                rect.setAttribute("stroke", stroke);
+                rect.setAttribute("stroke-width", strokeWidth);
+                group.appendChild(rect);
+
+                // 寫入文字
+                const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                text.setAttribute("x", node.x);
+                text.setAttribute("y", node.y + 4);
+                text.setAttribute("text-anchor", "middle");
+                text.setAttribute("fill", textColor);
+                text.setAttribute("font-size", "11px");
+                text.setAttribute("font-family", "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace");
+                text.setAttribute("font-weight", weight);
+                text.textContent = node.label;
+                group.appendChild(text);
+
+                svg.appendChild(group);
+            });
+        }
+
+        // 互動函數：下一步
+        function nextStep() {
+            if (currentIndex < stepsData.length - 1) {
+                currentIndex++;
+                renderStep();
+            }
+        }
+
+        // 互動函數：上一步
+        function prevStep() {
+            if (currentIndex > 0) {
+                currentIndex--;
+                renderStep();
+            }
+        }
+
+        // 重置
+        function resetDemo() {
+            initDemo();
+        }
+
+        // 頁面載入完成後執行
+        window.onload = function() {
+            initDemo();
+        };
+    </script>
+</body>
+</html>
