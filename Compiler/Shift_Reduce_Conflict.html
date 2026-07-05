@@ -1,0 +1,671 @@
+---
+layout: page_info_injector
+title: "[Chapter 4.7] LR(0) 語法移進/規約衝突"
+description: "展示 LR(0) 語法分析器在運作中因一狀態項目集滿足規約又滿足移進時的判斷衝突。"
+role: "supplementary"
+related: []
+tags: []
+---
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LR(0) 與 LR(1) 衝突消解逐步動態追蹤</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .transition-all-custom {
+            transition: all 0.3s ease-in-out;
+        }
+        .stack-item-anim {
+            animation: slideIn 0.25s ease-out forwards;
+        }
+        @keyframes slideIn {
+            from { transform: translateY(-15px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .table-cell-highlight {
+            background-color: rgba(245, 158, 11, 0.18) !important;
+            color: #d97706 !important;
+            font-weight: bold;
+            border: 2px solid #f59e0b !important;
+        }
+        .table-row-active {
+            background-color: rgba(59, 130, 246, 0.08) !important;
+            border-left: 4px solid #3b82f6;
+        }
+        .table-row-conflict {
+            background-color: rgba(239, 68, 68, 0.08) !important;
+            border-left: 4px solid #ef4444;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col justify-between">
+
+    <!-- 頁首 -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6 shadow-sm">
+        <div class="max-w-6xl mx-auto flex items-center justify-between">
+            <h1 class="text-xl font-bold tracking-tight text-slate-900">編譯器設計：LR(0) 與 LR(1) 衝突消解逐步動態追蹤</h1>
+            <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-mono">Chapter 4.7 More Powerful LR Parsers</span>
+        </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="max-w-6xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
+        
+        <!-- 左側控制面板與說明 -->
+        <section class="lg:col-span-5 flex flex-col gap-4">
+            
+            <!-- 模式選擇 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-2">
+                <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">請選擇剖析器類型進行模擬</h2>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="selectMode('lr0')" id="tab-lr0" class="py-3 px-4 rounded-lg border-2 text-xs font-bold transition-all-custom border-blue-600 bg-blue-50/50 text-blue-700">
+                        LR(0) 剖析器 (無 Lookahead)
+                    </button>
+                    <button onclick="selectMode('lr1')" id="tab-lr1" class="py-3 px-4 rounded-lg border-2 text-xs font-bold transition-all-custom border-slate-200 text-slate-600 hover:bg-slate-50">
+                        LR(1) 剖析器 (有 Lookahead)
+                    </button>
+                </div>
+            </div>
+
+            <!-- 演示用文法與核心結構 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">當前分析用文法與項目定義</h2>
+                <div class="font-mono text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100 space-y-1">
+                    <div class="font-bold text-slate-700">增廣文法規則 (CFG)：</div>
+                    <div class="grid grid-cols-2 gap-1 text-[11px]">
+                        <div>(0) S' &rarr; S</div>
+                        <div>(1) S &rarr; L = R</div>
+                        <div>(2) S &rarr; R</div>
+                        <div>(3) L &rarr; * R</div>
+                        <div>(4) L &rarr; id</div>
+                        <div>(5) R &rarr; L</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 核心逐步說明面板 (已整合 Lookahead 決策與比對) -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between min-h-[460px]">
+                <div>
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-bold text-slate-900 text-sm" id="mode-title-display">LR(0) 剖析器逐步演示</h3>
+                        <span id="step-badge" class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-mono">步驟 1 / 3</span>
+                    </div>
+
+                    <!-- 步驟進度條 -->
+                    <div class="flex gap-1 mb-4" id="step-dots-container">
+                        <!-- 動態生成步驟點 -->
+                    </div>
+                    
+                    <!-- 步驟詳細說明 -->
+                    <div class="prose prose-sm text-slate-600 leading-relaxed min-h-[90px] mb-4 text-xs" id="step-desc">
+                        載入中...
+                    </div>
+
+                    <!-- 整合進來的「看前符號判定與決策」獨立子面板 -->
+                    <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3 font-mono text-[11px]">
+                        <div class="border-b border-slate-200 pb-1.5 font-bold text-slate-700 flex justify-between items-center">
+                            <span class="flex items-center gap-1">
+                                <svg class="w-3.5 h-3.5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                <span>看前符號判定與決策 (Lookahead Eval)</span>
+                            </span>
+                            <span id="eval-status-badge" class="px-1.5 py-0.5 rounded text-[9px] bg-slate-200 text-slate-600">正常分析</span>
+                        </div>
+                        
+                        <div class="space-y-2">
+                            <div>
+                                <span class="font-bold text-blue-700 block mb-0.5">移進判定 (Shift Check)：</span>
+                                <span id="eval-shift-text" class="text-slate-600 font-sans leading-normal">評估中</span>
+                            </div>
+                            <div class="border-t border-slate-200/60 pt-2">
+                                <span id="eval-reduce-header" class="font-bold text-emerald-700 block mb-0.5">歸約判定 (Reduce Check)：</span>
+                                <span id="eval-reduce-text" class="text-slate-600 font-sans leading-normal">評估中</span>
+                            </div>
+                        </div>
+
+                        <div class="pt-2 border-t border-slate-200 flex justify-between items-center text-xs">
+                            <span class="font-bold text-slate-500">最終判定動作 (Action)：</span>
+                            <span id="final-decision-badge" class="font-bold px-2.5 py-1 rounded border">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 互動控制按鈕 -->
+                <div class="border-t border-slate-100 pt-4 mt-4 flex items-center justify-between gap-3">
+                    <button id="btn-prev" onclick="prevStep()" class="flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                        上一步 (Prev)
+                    </button>
+                    <button id="btn-next" onclick="nextStep()" class="flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm">
+                        下一步 (Next)
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- 右側視覺化與模擬畫布 -->
+        <section class="lg:col-span-7 flex flex-col gap-4">
+            
+            <!-- 待分析輸入字串 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">輸入緩衝區與 Lookahead 指標</div>
+                <div class="flex items-center gap-3 py-3 bg-slate-900 rounded-lg justify-center overflow-x-auto" id="input-stream-container">
+                    <!-- JS 動態更新 -->
+                </div>
+            </div>
+
+            <!-- DFA 局部狀態轉換表 (DFA Transition Table - 已局部化) -->
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col">
+                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2.5 flex items-center justify-between">
+                    <span>DFA 局部狀態轉換表 (Partial DFA Transition Table)</span>
+                    <span id="current-op-status" class="text-xs text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded border border-blue-100 font-mono">狀態待命中</span>
+                </div>
+                <div class="overflow-x-auto text-[10px] font-mono">
+                    <table class="w-full border-collapse border border-slate-200 text-center">
+                        <thead>
+                            <tr class="bg-slate-100 text-slate-600 font-bold">
+                                <th class="border border-slate-200 p-2 text-xs" rowspan="2">當前狀態</th>
+                                <th class="border border-slate-200 p-2 text-xs" colspan="4">ACTION (終端符號決策)</th>
+                                <th class="border border-slate-200 p-2 text-xs" colspan="3">GOTO (非終端轉移邊)</th>
+                            </tr>
+                            <tr class="bg-slate-50 text-slate-500 font-bold text-xs">
+                                <th class="border border-slate-200 p-1.5">id</th>
+                                <th class="border border-slate-200 p-1.5">=</th>
+                                <th class="border border-slate-200 p-1.5">*</th>
+                                <th class="border border-slate-200 p-1.5">$</th>
+                                <th class="border border-slate-200 p-1.5">S</th>
+                                <th class="border border-slate-200 p-1.5">L</th>
+                                <th class="border border-slate-200 p-1.5">R</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dfa-table-body">
+                            <!-- 狀態列由 JS 渲染 -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 分析棧與項目集狀態二合一 -->
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-4">
+                
+                <!-- 分析棧 (Parser Stack) -->
+                <div class="md:col-span-5 bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col min-h-[200px]">
+                    <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                        <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+                        <span>分析棧 (Stack 狀態)</span>
+                    </div>
+                    <div class="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col-reverse justify-start gap-1.5 flex-grow font-mono overflow-y-auto" id="stack-container">
+                        <!-- JS 動態更新 stack -->
+                    </div>
+                </div>
+
+                <!-- 當前 DFA 狀態下的項目集 (Item Set) -->
+                <div class="md:col-span-7 bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col">
+                    <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                        <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                        <span id="item-set-title">當前 DFA 狀態項目集</span>
+                    </div>
+                    <div class="bg-slate-950 border border-slate-800 rounded-lg p-3 flex-grow font-mono text-xs text-slate-300 space-y-1.5" id="item-set-container">
+                        <!-- JS 動態更新項目集 -->
+                    </div>
+                </div>
+
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- 頁尾 -->
+    <footer class="bg-white border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500">
+        <div class="max-w-6xl mx-auto">
+             編譯器設計課程輔助學術軟體 - LR 分析與看前符號判定對照
+        </div>
+    </footer>
+
+    <script>
+        // 定義靜態 DFA 狀態轉換關係（局部化，僅包含 0, 2, 5, 6）
+        const dfaTransitionMap = {
+            I0: { id: "轉移至 I5", equal: "-", star: "轉移至 I4", dollar: "-", S: "轉移至 I1", L: "轉移至 I2", R: "轉移至 I3" },
+            I2: { id: "-", equal: "轉移至 I6", star: "-", dollar: "-", S: "-", L: "-", R: "-" },
+            I5: { id: "-", equal: "-", star: "-", dollar: "-", S: "-", L: "-", R: "-" },
+            I6: { id: "轉移至 I9", equal: "-", star: "轉移至 I4", dollar: "-", S: "-", L: "轉移至 I8", R: "轉移至 I8" }
+        };
+
+        // 定義模擬資料 (從已壓入狀態 0、id、狀態 5 開始)
+        const parserSimulations = {
+            lr0: {
+                title: "LR(0) 剖析器模擬 (無 Lookahead 限制)",
+                inputStream: ["id", "=", "id", "$"],
+                steps: [
+                    {
+                        desc: "<b>步驟 1 - 起點於狀態 5 (I5) 準備歸約：</b>剖析器目前已將識別碼 <code>id</code> 壓入棧中，分析棧顯示為 <code>0 id 5</code>。當前 Lookahead 符號指向 <code>=</code>。剖析器檢查狀態 <code>I5</code> 的項目。由於 <code>L &rarr; id &middot;</code> 圓點已到最右端，且 LR(0) 完全不看 Lookahead，故在此狀態下直接執行歸約動作。",
+                        pointer: 1, // Lookahead 是 =
+                        stack: [
+                            { type: "state", val: "0" },
+                            { type: "symbol", val: "id" },
+                            { type: "state", val: "5" }
+                        ],
+                        itemSetTitle: "狀態 I5 (LR(0) 項目集)",
+                        items: [
+                            "L &rarr; id &middot;"
+                        ],
+                        shiftCheck: "無任何項目之圓點後緊接 <code>=</code>。<br><span class='text-slate-500'>&rArr; 無移進可能</span>",
+                        reduceCheck: "發現歸約項目 <code>L &rarr; id &middot;</code>。由於 <b>LR(0) 不考慮看前符號</b>，此時不論當前 Lookahead 是什麼，皆一律判定可進行歸約。<br><span class='text-emerald-600 font-bold'>&rArr; 歸約 (Reduce) 判定成立</span>",
+                        finalChoice: "依規則 (4) L &rarr; id 歸約",
+                        choiceClass: "text-emerald-600 bg-emerald-100 border-emerald-300 font-bold",
+                        activeNodes: ["I5"],
+                        activeTransitionCol: null,
+                        opStatus: "狀態 I5：執行歸約",
+                        evalBadgeText: "進行歸約",
+                        evalBadgeClass: "bg-emerald-100 text-emerald-800"
+                    },
+                    {
+                        desc: "<b>步驟 2 - 歸約後轉移至狀態 2 (I2)：</b>彈出狀態 <code>5</code> 與符號 <code>id</code>，棧頂暴露狀態 <code>0</code>。查閱 GOTO 表：<code>GOTO[0, L] = 2</code>。將非終端符號 <code>L</code> 與狀態 <code>2</code> 壓入分析棧。棧狀態更新為 <code>0 L 2</code>。當前 Lookahead 依然對準 <code>=</code>。",
+                        pointer: 1,
+                        stack: [
+                            { type: "state", val: "0" },
+                            { type: "symbol", val: "L" },
+                            { type: "state", val: "2" }
+                        ],
+                        itemSetTitle: "狀態 I2 (LR(0) 項目集)",
+                        items: [
+                            "S &rarr; L &middot; = R",
+                            "R &rarr; L &middot;"
+                        ],
+                        shiftCheck: "發現項目 <code>S &rarr; L &middot; = R</code>，其圓點後緊接 <code>=</code>，且 Lookahead 剛好為 <code>=</code>。<br><span class='text-blue-600 font-bold'>&rArr; 移進 (Shift) 判定成立</span>",
+                        reduceCheck: "發現歸約項目 <code>R &rarr; L &middot;</code>。由於 <b>LR(0) 完全不看 Lookahead</b>，即使當前 Lookahead 是 <code>=</code>，分析器仍判定可進行歸約。<br><span class='text-emerald-600 font-bold'>&rArr; 歸約 (Reduce) 判定成立</span>",
+                        finalChoice: "Shift/Reduce 衝突！分析器當機",
+                        choiceClass: "text-red-600 bg-red-100 border-red-300 font-bold",
+                        activeNodes: ["I2"],
+                        activeTransitionCol: "equal",
+                        opStatus: "狀態 I2：發生移進與歸約碰撞",
+                        evalBadgeText: "決策衝突",
+                        evalBadgeClass: "bg-red-100 text-red-800 animate-pulse"
+                    },
+                    {
+                        desc: "<b>步驟 3 - 衝突爆發（剖析終止）：</b>在分析棧處於 <code>0 L 2</code> 且 Lookahead 遇 <code>=</code> 時，由於 LR(0) 無法利用 Lookahead 限制對項目 <code>R &rarr; L &middot;</code> 進行過濾，移進 <code>=</code> 與歸約 <code>R &rarr; L</code> 同時成立。剖析因二義性衝突宣告失敗。",
+                        pointer: 1,
+                        stack: [
+                            { type: "state", val: "0" },
+                            { type: "symbol", val: "L" },
+                            { type: "state", val: "2" }
+                        ],
+                        itemSetTitle: "狀態 I2 (LR(0) 項目集)",
+                        items: [
+                            "S &rarr; L &middot; = R  (欲 Shift =)",
+                            "R &rarr; L &middot;      (欲 Reduce by R &rarr; L)"
+                        ],
+                        shiftCheck: "<span class='text-red-500 font-bold'>衝突：想要移進 '=' 符號</span>",
+                        reduceCheck: "<span class='text-red-500 font-bold'>衝突：想要依規則 (5) R &rarr; L 歸約</span>",
+                        finalChoice: "剖析失敗 (Shift/Reduce Conflict)",
+                        choiceClass: "text-red-600 bg-red-100 border-red-300 font-bold animate-pulse",
+                        activeNodes: ["I2"],
+                        activeTransitionCol: "equal",
+                        opStatus: "狀態 I2：剖析器異常終止",
+                        evalBadgeText: "決策衝突",
+                        evalBadgeClass: "bg-red-100 text-red-800 animate-pulse"
+                    }
+                ]
+            },
+            lr1: {
+                title: "LR(1) 剖析器模擬 (精確 Lookahead 限制)",
+                inputStream: ["id", "=", "id", "$"],
+                steps: [
+                    {
+                        desc: "<b>步驟 1 - 起點於狀態 5 (I5) 準備歸約：</b>剖析器此時已將識別碼 <code>id</code> 壓入棧中，分析棧顯示為 <code>0 id 5</code>。當前 Lookahead 符號指向 <code>=</code>。剖析器檢查狀態 <code>I5</code> 項目：<code>[L &rarr; id &middot;, =/$]</code>。Lookahead 為 <code>=</code> 在前移集合中，執行歸約動作。",
+                        pointer: 1, // Lookahead 是 =
+                        stack: [
+                            { type: "state", val: "0" },
+                            { type: "symbol", val: "id" },
+                            { type: "state", val: "5" }
+                        ],
+                        itemSetTitle: "狀態 I5 (LR(1) 項目集)",
+                        items: [
+                            "[L &rarr; id &middot;, =/$]"
+                        ],
+                        shiftCheck: "無任何項目之圓點後緊接 <code>=</code>。<br><span class='text-slate-500'>&rArr; 無移進可能</span>",
+                        reduceCheck: "發現歸約項目 <code>[L &rarr; id &middot;, =/$]</code>。剖析器檢查看前符號：當前 Lookahead 為 <code>=</code>，**正好屬於項目自帶的看前集合 {=, $}**。<br><span class='text-emerald-600 font-bold'>&rArr; 歸約 (Reduce) 判定成立</span>",
+                        finalChoice: "依規則 (4) L &rarr; id 歸約",
+                        choiceClass: "text-emerald-600 bg-emerald-100 border-emerald-300 font-bold",
+                        activeNodes: ["I5"],
+                        activeTransitionCol: null,
+                        opStatus: "狀態 I5：執行歸約",
+                        evalBadgeText: "進行歸約",
+                        evalBadgeClass: "bg-emerald-100 text-emerald-800"
+                    },
+                    {
+                        desc: "<b>步驟 2 - 歸約後轉移至狀態 2 (I2)：</b>彈出狀態 <code>5</code> 與符號 <code>id</code>，棧頂暴露狀態 <code>0</code>。查閱 GOTO 表：<code>GOTO[0, L] = 2</code>。將非終端符號 <code>L</code> 與狀態 <code>2</code> 壓入分析棧。棧狀態更新為 <code>0 L 2</code>。當前 Lookahead 依然對準 <code>=</code>。此步驟我們將見證 <b>LR(1) 如何利用 Lookahead 完美化解衝突</b>。",
+                        pointer: 1,
+                        stack: [
+                            { type: "state", val: "0" },
+                            { type: "symbol", val: "L" },
+                            { type: "state", val: "2" }
+                        ],
+                        itemSetTitle: "狀態 I2 (LR(1) 項目集)",
+                        items: [
+                            "[S &rarr; L &middot; = R, $]",
+                            "[R &rarr; L &middot;, $]"
+                        ],
+                        shiftCheck: "發現項目 <code>[S &rarr; L &middot; = R, $]</code>，其圓點後緊接 <code>=</code>，且 Lookahead 剛好為 <code>=</code>。<br><span class='text-blue-600 font-bold'>&rArr; 移進 (Shift) 判定成立</span>",
+                        reduceCheck: "發現歸約項目 <code>[R &rarr; L &middot;, $]</code>。剖析器檢查其看前限制：**該規則只有在 Lookahead 屬於 { $ } 時才允許歸約**。但當前 Lookahead 為 <code>=</code>，<b>兩者不吻合！</b><br><span class='text-red-500 font-bold'>&rArr; 歸約 (Reduce) 被過濾排除</span>",
+                        finalChoice: "移進 (Shift) ── 成功化解衝突！",
+                        choiceClass: "text-blue-600 bg-blue-100 border-blue-300 font-bold",
+                        activeNodes: ["I2"],
+                        activeTransitionCol: "equal",
+                        opStatus: "狀態 I2：經由 Lookahead 排除歸約",
+                        evalBadgeText: "正常分析",
+                        evalBadgeClass: "bg-slate-200 text-slate-600"
+                    },
+                    {
+                        desc: "<b>步驟 3 - 成功執行移進動作：</b>由於 Lookahead 的精確限制過濾掉了歸約動作，剖析器避開了衝突。接下來，剖析器成功執行移位動作：將運算子 <code>=</code> 與轉移狀態 <code>6</code> 壓入棧中，分析棧變為 <code>0 L 2 = 6</code>，指標向右推進。",
+                        pointer: 2, // 推進到第二個 id
+                        stack: [
+                            { type: "state", val: "0" },
+                            { type: "symbol", val: "L" },
+                            { type: "state", val: "2" },
+                            { type: "symbol", val: "=" },
+                            { type: "state", val: "6" }
+                        ],
+                        itemSetTitle: "狀態 I6 (LR(1) 項目集)",
+                        items: [
+                            "[R &rarr; &middot; L, $]",
+                            "[L &rarr; &middot; * R, $]",
+                            "[L &rarr; &middot; id, $]"
+                        ],
+                        shiftCheck: "發現項目 <code>[L &rarr; &middot; id, $]</code>。其圓點後緊接 <code>id</code>，且 Lookahead 亦為 <code>id</code>。<br><span class='text-blue-600 font-bold'>&rArr; 移進 (Shift) 判定成立</span>",
+                        reduceCheck: "無任何歸約項目。<br><span class='text-slate-500'>&rArr; 無歸約可能</span>",
+                        finalChoice: "移進 (Shift)",
+                        choiceClass: "text-blue-600 bg-blue-100 border-blue-300 font-bold",
+                        activeNodes: ["I6"],
+                        activeTransitionCol: "id",
+                        opStatus: "狀態 I6：移進第二個 id",
+                        evalBadgeText: "正常分析",
+                        evalBadgeClass: "bg-slate-200 text-slate-600"
+                    }
+                ]
+            }
+        };
+
+        let currentMode = "lr0";
+        let currentStepIndex = 0;
+
+        // 初始化演示
+        function initDemo() {
+            currentMode = "lr0";
+            currentStepIndex = 0;
+            renderStep();
+        }
+
+        // 切換剖析器類型
+        function selectMode(mode) {
+            if (currentMode === mode) return;
+            currentMode = mode;
+            currentStepIndex = 0;
+
+            // 更新按鈕樣式
+            const btnLr0 = document.getElementById("tab-lr0");
+            const btnLr1 = document.getElementById("tab-lr1");
+
+            if (mode === "lr0") {
+                btnLr0.className = "py-3 px-4 rounded-lg border-2 text-xs font-bold transition-all-custom border-blue-600 bg-blue-50/50 text-blue-700";
+                btnLr1.className = "py-3 px-4 rounded-lg border-2 text-xs font-bold transition-all-custom border-slate-200 text-slate-600 hover:bg-slate-50";
+            } else {
+                btnLr1.className = "py-3 px-4 rounded-lg border-2 text-xs font-bold transition-all-custom border-blue-600 bg-blue-50/50 text-blue-700";
+                btnLr0.className = "py-3 px-4 rounded-lg border-2 text-xs font-bold transition-all-custom border-slate-200 text-slate-600 hover:bg-slate-50";
+            }
+
+            renderStep();
+        }
+
+        // 渲染步驟資訊與數據對接
+        function renderStep() {
+            const data = parserSimulations[currentMode];
+            const step = data.steps[currentStepIndex];
+            const totalSteps = data.steps.length;
+
+            // 1. 更新說明標題與進度
+            document.getElementById("mode-title-display").innerHTML = data.title;
+            document.getElementById("step-badge").textContent = `步驟 ${currentStepIndex + 1} / ${totalSteps}`;
+            document.getElementById("step-desc").innerHTML = step.desc;
+
+            // 2. 更新步驟進度條
+            const dotsContainer = document.getElementById("step-dots-container");
+            dotsContainer.innerHTML = "";
+            for (let i = 0; i < totalSteps; i++) {
+                const dot = document.createElement("div");
+                if (i === currentStepIndex) {
+                    dot.className = "step-pill h-1.5 flex-grow rounded-full bg-blue-600 transition-all-custom";
+                } else if (i < currentStepIndex) {
+                    dot.className = "step-pill h-1.5 flex-grow rounded-full bg-blue-300 transition-all-custom";
+                } else {
+                    dot.className = "step-pill h-1.5 flex-grow rounded-full bg-slate-200 transition-all-custom";
+                }
+                dotsContainer.appendChild(dot);
+            }
+
+            // 3. 限制互動按鈕狀態
+            const prevBtn = document.getElementById("btn-prev");
+            const nextBtn = document.getElementById("btn-next");
+
+            if (currentStepIndex === 0) {
+                prevBtn.disabled = true;
+                prevBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-400 bg-slate-50 cursor-not-allowed transition-all duration-200";
+            } else {
+                prevBtn.disabled = false;
+                prevBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-all duration-200";
+            }
+
+            if (currentStepIndex === totalSteps - 1) {
+                nextBtn.disabled = true;
+                nextBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-slate-200 text-slate-400 text-sm font-medium cursor-not-allowed transition-all duration-200";
+            } else {
+                nextBtn.disabled = false;
+                nextBtn.className = "flex-grow flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-all duration-200 shadow-sm";
+            }
+
+            // 4. 渲染輸入緩衝區 (Input Stream)
+            const streamContainer = document.getElementById("input-stream-container");
+            streamContainer.innerHTML = "";
+
+            data.inputStream.forEach((tk, idx) => {
+                const wrapper = document.createElement("div");
+                wrapper.className = "flex flex-col items-center gap-1 transition-all-custom";
+
+                const tokenCard = document.createElement("div");
+                let baseStyle = "px-4 py-2 rounded font-mono text-xs font-bold border transition-all-custom ";
+                
+                if (idx === step.pointer) {
+                    baseStyle += "bg-blue-600 text-white border-blue-400 shadow-lg scale-105 ring-2 ring-amber-400 ring-offset-2 ring-offset-slate-950";
+                } else if (idx < step.pointer) {
+                    baseStyle += "bg-slate-800 text-slate-500 border-slate-700 line-through opacity-40";
+                } else {
+                    baseStyle += "bg-slate-800 text-slate-300 border-slate-700";
+                }
+
+                tokenCard.className = baseStyle;
+                tokenCard.innerHTML = tk;
+
+                const indicator = document.createElement("span");
+                indicator.className = "text-[9px] font-mono ";
+                if (idx === step.pointer) {
+                    indicator.className += "text-amber-400 font-bold";
+                    indicator.textContent = "Lookahead";
+                } else if (idx < step.pointer) {
+                    indicator.className += "text-slate-600";
+                    indicator.textContent = "Consumed";
+                } else {
+                    indicator.className += "text-slate-500";
+                    indicator.textContent = "Pending";
+                }
+
+                wrapper.appendChild(tokenCard);
+                wrapper.appendChild(indicator);
+                streamContainer.appendChild(wrapper);
+            });
+
+            // 5. 渲染「看前符號判定與決策」專屬子面板資訊
+            document.getElementById("eval-shift-text").innerHTML = step.shiftCheck;
+            document.getElementById("eval-reduce-text").innerHTML = step.reduceCheck;
+            
+            const evalHeader = document.getElementById("eval-reduce-header");
+            if (currentMode === "lr1") {
+                evalHeader.textContent = "歸約判定 (精確 Lookahead 匹配)：";
+            } else {
+                evalHeader.textContent = "歸約判定 (無 Lookahead 限制)：";
+            }
+
+            const evalStatusBadge = document.getElementById("eval-status-badge");
+            evalStatusBadge.textContent = step.evalBadgeText;
+            evalStatusBadge.className = `px-1.5 py-0.5 rounded text-[9px] ${step.evalBadgeClass}`;
+
+            const finalBadge = document.getElementById("final-decision-badge");
+            finalBadge.textContent = step.finalChoice;
+            finalBadge.className = "font-mono text-xs px-2.5 py-1 rounded border transition-all-custom " + step.choiceClass;
+
+            // 6. 渲染與高亮 DFA 局部狀態轉換表
+            renderDfaTable(step);
+
+            // 7. 渲染分析棧 (Parser Stack)
+            const stackContainer = document.getElementById("stack-container");
+            stackContainer.innerHTML = "";
+
+            step.stack.forEach(item => {
+                const div = document.createElement("div");
+                if (item.type === "state") {
+                    div.className = "stack-item-anim text-center py-1.5 rounded text-xs font-bold border border-slate-800 bg-slate-800 text-amber-400";
+                    div.innerHTML = `<span class="text-slate-400 font-normal">狀態 </span>${item.val}`;
+                } else {
+                    div.className = "stack-item-anim text-center py-1.5 rounded text-xs font-bold border border-slate-800 bg-blue-950 text-blue-300";
+                    div.innerHTML = `<span class="text-slate-500 font-normal">符號 </span>${item.val}`;
+                }
+                stackContainer.appendChild(div);
+            });
+
+            // 8. 渲染當前狀態項目集 (Item Set)
+            document.getElementById("item-set-title").textContent = step.itemSetTitle;
+            const itemSetContainer = document.getElementById("item-set-container");
+            itemSetContainer.innerHTML = "";
+
+            step.items.forEach(itemStr => {
+                const itemDiv = document.createElement("div");
+                itemDiv.className = "py-1 border-b border-slate-900/60 last:border-0 text-slate-300 flex items-center justify-between";
+                
+                // 突出標示項目核心部分
+                let formattedStr = itemStr;
+                if (currentMode === "lr1") {
+                    const parts = itemStr.split(",");
+                    formattedStr = `${parts[0]} <span class="text-amber-400 font-bold bg-slate-900 px-1.5 py-0.5 rounded ml-2 border border-slate-800">Lookahead: ${parts[1]}</span>`;
+                }
+                
+                itemDiv.innerHTML = formattedStr;
+                itemSetContainer.appendChild(itemDiv);
+            });
+        }
+
+        // 渲染與高亮 DFA 轉換表 (已局部化，僅包含 0, 2, 5, 6)
+        function renderDfaTable(step) {
+            const tableBody = document.getElementById("dfa-table-body");
+            tableBody.innerHTML = "";
+            document.getElementById("current-op-status").textContent = step.opStatus;
+
+            // 尋找當前動作是否在衝突狀態下
+            const isConflictStep = currentMode === "lr0" && currentStepIndex === 1; // 步驟2(索引1)是狀態2的衝突點
+
+            // 僅顯示局部狀態
+            const statesToRender = ["I0", "I2", "I5", "I6"];
+
+            statesToRender.forEach(stateKey => {
+                const tr = document.createElement("tr");
+                const isRowActive = step.activeNodes.includes(stateKey);
+                
+                // 設定列背景高亮樣式
+                if (isRowActive) {
+                    if (isConflictStep && stateKey === "I2") {
+                        tr.className = "transition-all-custom table-row-conflict text-xs";
+                    } else {
+                        tr.className = "transition-all-custom table-row-active text-xs";
+                    }
+                } else {
+                    tr.className = "transition-all-custom text-xs text-slate-600";
+                }
+
+                // 當前狀態
+                const tdState = document.createElement("td");
+                tdState.className = "border border-slate-200 p-1.5 font-bold bg-slate-50 text-slate-700";
+                const stateNum = stateKey.substring(1);
+                tdState.textContent = `${stateNum} (${stateKey})`;
+                tr.appendChild(tdState);
+
+                const cols = [
+                    { key: "id", name: "id" },
+                    { key: "equal", name: "=" },
+                    { key: "star", name: "*" },
+                    { key: "dollar", name: "$" },
+                    { key: "S", name: "S" },
+                    { key: "L", name: "L" },
+                    { key: "R", name: "R" }
+                ];
+
+                cols.forEach(col => {
+                    const td = document.createElement("td");
+                    td.className = "border border-slate-200 p-1.5 text-xs transition-all-custom";
+                    
+                    // 特殊處理：我們只顯示局部表數據
+                    let val = dfaTransitionMap[stateKey][col.key];
+                    if (currentMode === "lr0" && stateKey === "I2" && col.key === "equal") {
+                        val = "移進 I6 / 歸約 (5) 衝突";
+                    } else if (currentMode === "lr1" && stateKey === "I2" && col.key === "dollar") {
+                        val = "依規則 (5) 歸約";
+                    } else if (currentMode === "lr0" && stateKey === "I2" && (col.key === "id" || col.key === "star" || col.key === "dollar")) {
+                        val = "依規則 (5) 歸約";
+                    } else if (currentMode === "lr0" && stateKey === "I5" && (col.key === "id" || col.key === "equal" || col.key === "star" || col.key === "dollar")) {
+                        val = "依規則 (4) 歸約";
+                    } else if (currentMode === "lr1" && stateKey === "I5" && (col.key === "equal" || col.key === "dollar")) {
+                        val = "依規則 (4) 歸約";
+                    }
+                    
+                    td.textContent = val;
+
+                    if (isRowActive && step.activeTransitionCol === col.key) {
+                        td.className += " table-cell-highlight";
+                    }
+                    tr.appendChild(td);
+                });
+
+                tableBody.appendChild(tr);
+            });
+        }
+
+        // 互動函數：下一步
+        function nextStep() {
+            const data = parserSimulations[currentMode].steps;
+            if (currentStepIndex < data.length - 1) {
+                currentStepIndex++;
+                renderStep();
+            }
+        }
+
+        // 互動函數：上一步
+        function prevStep() {
+            if (currentStepIndex > 0) {
+                currentStepIndex--;
+                renderStep();
+            }
+        }
+
+        // 重置
+        function resetDemo() {
+            initDemo();
+        }
+
+        // 頁面載入完成後執行
+        window.onload = function() {
+            initDemo();
+        };
+    </script>
+</body>
+</html>
