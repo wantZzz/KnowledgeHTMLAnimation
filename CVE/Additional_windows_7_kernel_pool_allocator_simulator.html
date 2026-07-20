@@ -1,0 +1,869 @@
+---
+layout: page_info_injector
+title: "Windows 7 核心集區記憶體分配模擬器"
+description: "展示在 Windows 7 下核心集區池塊分配分布情況及驅動程式如何向核心集區申請記憶體空間"
+role: "supplementary"
+related: []
+tags: []
+---
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Windows 7 核心集區記憶體分配模擬器</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+        }
+        
+        .mono-font {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* 隱藏滾動條但保持功能 */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        /* 自訂動畫過渡 */
+        .transition-all-custom {
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        @keyframes scanline {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(100%); }
+        }
+
+        .scanline-effect::after {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            background-size: 100% 2px, 3px 100%;
+            z-index: 2;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 scanline-effect relative min-h-screen">
+
+    <div class="max-w-7xl mx-auto space-y-6">
+        <!-- 頂部標題與說明 -->
+        <header class="border-b border-slate-800 pb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+                <h1 class="text-2xl font-bold tracking-tight text-sky-400 flex items-center gap-3">
+                    <!-- 核心處理器 SVG 圖示 -->
+                    <svg class="w-8 h-8 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <rect x="4" y="4" width="16" height="16" rx="2" />
+                        <path d="M9 9h6v6H9z" />
+                        <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3" />
+                    </svg>
+                    Windows 7 核心集區記憶體分配模擬器
+                </h1>
+                <p class="text-slate-400 text-sm mt-1">
+                    本系統模擬核心驅動程式 (.sys) 呼叫 ExAllocatePoolWithTag 於分頁集區 (Paged Pool) 與非分頁集區 (NonPaged Pool) 的空間尋找、規劃與對齊行為。
+                </p>
+            </div>
+            <div class="flex gap-2">
+                <span class="px-3 py-1 bg-slate-800 border border-slate-700 text-xs rounded text-slate-300 mono-font">x64 Architecture (1 Block = 16 Bytes)</span>
+                <span class="px-3 py-1 bg-slate-800 border border-slate-700 text-xs rounded text-slate-300 mono-font">Page Size = 4096 Bytes</span>
+            </div>
+        </header>
+
+        <!-- 主要工作區：分為控制面板、分配與線性排布、詳細資訊 -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            
+            <!-- 左側/上側控制與多步演練面板 (4/12) -->
+            <div class="lg:col-span-4 space-y-6">
+                <!-- 申請參數設定 -->
+                <div class="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-4">
+                    <h2 class="text-sm font-semibold tracking-wider text-slate-400 uppercase flex items-center gap-2">
+                        <!-- 調節閥圖示 -->
+                        <svg class="w-4 h-4 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                        </svg>
+                        1. 核心申請參數設定 (ExAllocatePoolWithTag)
+                    </h2>
+                    
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-xs text-slate-400 mb-1">要求集區類型 (PoolType)</label>
+                            <div class="grid grid-cols-2 gap-2">
+                                <button id="btn-type-nonpaged" onclick="setPoolType('NonPagedPool')" class="py-2 px-3 text-xs font-medium rounded border border-sky-500/50 bg-sky-950/40 text-sky-300 transition-all">
+                                    NonPagedPool (非分頁)
+                                </button>
+                                <button id="btn-type-paged" onclick="setPoolType('PagedPool')" class="py-2 px-3 text-xs font-medium rounded border border-slate-800 bg-slate-900 text-slate-400 transition-all">
+                                    PagedPool (分頁)
+                                </button>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-slate-400 mb-1">申請長度 (NumberOfBytes)</label>
+                            <div class="grid grid-cols-4 gap-1.5">
+                                <button onclick="setRequestedSize(32)" class="size-btn py-1 px-1 text-xs rounded border border-slate-800 bg-slate-900 text-slate-300 hover:border-slate-700">32 B</button>
+                                <button onclick="setRequestedSize(240)" class="size-btn py-1 px-1 text-xs rounded border border-slate-800 bg-slate-900 text-slate-300 hover:border-slate-700">240 B</button>
+                                <button onclick="setRequestedSize(1024)" class="size-btn py-1 px-1 text-xs rounded border border-slate-800 bg-slate-900 text-slate-300 hover:border-slate-700">1.0 KB</button>
+                                <button onclick="setRequestedSize(4000)" class="size-btn py-1 px-1 text-xs rounded border border-slate-800 bg-slate-900 text-slate-300 hover:border-slate-700">3.9 KB</button>
+                            </div>
+                            <div class="mt-2 flex items-center gap-2">
+                                <input type="number" id="input-custom-size" value="128" min="8" max="12288" step="8" oninput="handleCustomSize(this.value)" class="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs w-24 text-sky-400 font-mono focus:outline-none focus:border-sky-500" />
+                                <span class="text-xs text-slate-500">Bytes (8B - 12KB)</span>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-slate-400 mb-1">記憶體標籤 (PoolTag)</label>
+                            <input type="text" id="input-tag" value="MyDr" maxlength="4" oninput="handleTagChange(this.value)" class="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs w-full text-emerald-400 font-mono tracking-widest uppercase focus:outline-none focus:border-emerald-500" />
+                            <span class="text-[10px] text-slate-500 block mt-0.5">必須為 4 位 ASCII 字元，代表申請的核心模組。</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 多步互動執行面板 -->
+                <div class="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-4">
+                    <h2 class="text-sm font-semibold tracking-wider text-slate-400 uppercase flex items-center gap-2">
+                        <!-- 步驟執行圖示 -->
+                        <svg class="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M14.7 19.3l-5.6-5.6V3m5.6 16.3l5.6-5.6V3M9.1 13.7L3.5 8.1V3" />
+                        </svg>
+                        2. 多步核心分配規劃演練
+                    </h2>
+
+                    <!-- 核心狀態機顯示 -->
+                    <div class="bg-slate-950 border border-slate-800 rounded p-3 space-y-2">
+                        <div class="flex justify-between items-center text-xs">
+                            <span class="text-slate-400">目前階段:</span>
+                            <span id="current-step-name" class="text-amber-400 font-medium">準備申請</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-1 rounded overflow-hidden">
+                            <div id="step-progress-bar" class="bg-amber-500 h-full w-0 transition-all duration-300"></div>
+                        </div>
+                        <p id="step-description" class="text-xs text-slate-300 leading-relaxed min-h-[48px] pt-1">
+                            請點擊「執行下一步驟」開始觀測核心對該對齊大小的搜尋、評估與排布流程。
+                        </p>
+                    </div>
+
+                    <!-- 單/雙互動操控按鈕 -->
+                    <div class="flex gap-2">
+                        <button id="btn-next-step" onclick="executeNextStep()" class="flex-1 py-2.5 px-4 bg-amber-600 hover:bg-amber-500 text-slate-950 font-semibold text-xs rounded transition-all flex items-center justify-center gap-1">
+                            <span>執行下一步驟</span>
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                            </svg>
+                        </button>
+                        <button id="btn-reset-allocation" onclick="resetSimulator()" class="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded transition-all">
+                            重置
+                        </button>
+                    </div>
+
+                    <!-- 靜態說明流程導覽 -->
+                    <div class="text-[11px] text-slate-500 space-y-1.5 pt-1 border-t border-slate-800/60">
+                        <div class="flex items-center gap-1.5">
+                            <span class="w-3.5 h-3.5 rounded-full bg-slate-800 flex items-center justify-center text-[9px] text-slate-400">1</span>
+                            <span>邊界對齊與分界：計算 Payload 與對齊邊界。</span>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <span class="w-3.5 h-3.5 rounded-full bg-slate-800 flex items-center justify-center text-[9px] text-slate-400">2</span>
+                            <span>集區決策：依據尺寸判斷使用小額或大額模式。</span>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <span class="w-3.5 h-3.5 rounded-full bg-slate-800 flex items-center justify-center text-[9px] text-slate-400">3</span>
+                            <span>空間檢索：遍歷 Lookaside/ListHeads 或向 Mm 申領頁面。</span>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <span class="w-3.5 h-3.5 rounded-full bg-slate-800 flex items-center justify-center text-[9px] text-slate-400">4</span>
+                            <span>規劃與寫入：寫入 POOL_HEADER、Tag，或寫入大額配置表。</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右側集區線性排布版面與詳細資訊 (8/12) -->
+            <div class="lg:col-span-8 space-y-6">
+                <!-- 線性排布狀態板 -->
+                <div class="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-4">
+                    <div class="flex justify-between items-center">
+                        <h2 class="text-sm font-semibold tracking-wider text-slate-400 uppercase flex items-center gap-2">
+                            <!-- 排列矩陣圖示 -->
+                            <svg class="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                            </svg>
+                            3. 線性虛擬位址集區排布 (虛擬頁面剖析)
+                        </h2>
+                        <div class="flex items-center gap-3 text-xs">
+                            <div class="flex items-center gap-1">
+                                <span class="w-2.5 h-2.5 bg-rose-950 border border-rose-500 rounded-sm"></span>
+                                <span class="text-slate-400">POOL_HEADER</span>
+                            </div>
+                            <div class="flex items-center gap-1">
+                                <span class="w-2.5 h-2.5 bg-blue-950 border border-blue-500 rounded-sm"></span>
+                                <span class="text-slate-400">已分配 Payload</span>
+                            </div>
+                            <div class="flex items-center gap-1">
+                                <span class="w-2.5 h-2.5 bg-slate-850 border border-slate-600 rounded-sm"></span>
+                                <span class="text-slate-400">空閒/可合併空間</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 虛擬頁面渲染區域 -->
+                    <div class="space-y-6">
+                        <!-- 非分頁集區 (NonPaged Pool) 區塊 -->
+                        <div class="border border-slate-800 bg-slate-950 rounded-lg p-4 space-y-2">
+                            <div class="flex justify-between items-center text-xs">
+                                <span class="text-sky-400 font-semibold tracking-wider uppercase">NonPagedPool (線性起點: 0xFFFFFA8000000000)</span>
+                                <span class="text-slate-500">實體鎖定, 常駐記憶體</span>
+                            </div>
+                            <div class="w-full overflow-x-auto no-scrollbar py-1">
+                                <div id="nonpaged-pool-container" class="flex min-w-[700px] h-16 bg-slate-900 border border-slate-800 rounded relative divide-x divide-slate-800">
+                                    <!-- 動態生成內部 Chunk 結構 -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 分頁集區 (Paged Pool) 區塊 -->
+                        <div class="border border-slate-800 bg-slate-950 rounded-lg p-4 space-y-2">
+                            <div class="flex justify-between items-center text-xs">
+                                <span class="text-teal-400 font-semibold tracking-wider uppercase">PagedPool (線性起點: 0xFFFFF8a000000000)</span>
+                                <span class="text-slate-500">分頁對應, 可置換至 pagefile.sys</span>
+                            </div>
+                            <div class="w-full overflow-x-auto no-scrollbar py-1">
+                                <div id="paged-pool-container" class="flex min-w-[700px] h-16 bg-slate-900 border border-slate-800 rounded relative divide-x divide-slate-800">
+                                    <!-- 動態生成內部 Chunk 結構 -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 詳細參數面板與核心分析 -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- POOL_HEADER 詳細解析面版 -->
+                    <div class="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-4">
+                        <h2 class="text-sm font-semibold tracking-wider text-slate-400 uppercase flex items-center gap-2">
+                            <!-- 二進位圖示 -->
+                            <svg class="w-4 h-4 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            4. 核心標頭與屬性分析 (POOL_HEADER)
+                        </h2>
+
+                        <div id="header-detail-panel" class="bg-slate-950 border border-slate-800 rounded p-4 space-y-3 text-xs">
+                            <p class="text-slate-400 text-center py-6">請在上方排布點擊任何記憶體區塊以解析 POOL_HEADER</p>
+                        </div>
+                    </div>
+
+                    <!-- 大額配置全域表分析面版 -->
+                    <div class="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-4">
+                        <h2 class="text-sm font-semibold tracking-wider text-slate-400 uppercase flex items-center gap-2">
+                            <!-- 全域表圖示 -->
+                            <svg class="w-4 h-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                            </svg>
+                            5. 核心大額分配追蹤表 (Big Allocation Table)
+                        </h2>
+
+                        <div class="bg-slate-950 border border-slate-800 rounded overflow-hidden">
+                            <table class="w-full text-left text-xs">
+                                <thead class="bg-slate-900 text-slate-400 font-medium">
+                                    <tr>
+                                        <th class="p-2 border-b border-slate-800">虛擬位址 (VA)</th>
+                                        <th class="p-2 border-b border-slate-800">類型</th>
+                                        <th class="p-2 border-b border-slate-800">大小 (Pages)</th>
+                                        <th class="p-2 border-b border-slate-800">標籤 (Tag)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="big-allocation-table-body" class="divide-y divide-slate-800/50 text-slate-300 mono-font">
+                                    <!-- 動態生成大額配置紀錄 -->
+                                    <tr>
+                                        <td colspan="4" class="p-4 text-center text-slate-500">目前無大於 4KB 的大額記憶體配置。</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 模擬器核心邏輯控制 -->
+    <script>
+        // 初始化虛擬數據集，代表 Windows 7 初始化狀態下的集區佈局
+        // 1 Block = 16 單位 (x64)
+        // 4KB 頁面 = 4096 單位 = 256 Blocks
+        let state = {
+            requestedSize: 128,
+            poolType: 'NonPagedPool',
+            tag: 'MyDr',
+            
+            // 多步演練目前階段
+            currentStep: 0,
+            
+            // 暫存目前的規劃計算
+            calc: {
+                alignedPayloadSize: 0,
+                neededBlocks: 0,
+                isLargeAllocation: false,
+                stepByStepDone: false
+            },
+
+            // 分頁集區與非分頁集區 (初始包含數個不連續的配置)
+            // 每個 chunk 的長度以 Block (16B) 為基本度量單位
+            nonPagedPool: [
+                { id: 'np-0', tag: 'Init', sizeBlocks: 24, isFree: false, prevSizeBlocks: 0, poolIndex: 0, poolType: 1 }, // 24*16 = 384B
+                { id: 'np-1', tag: 'Tcp4', sizeBlocks: 32, isFree: false, prevSizeBlocks: 24, poolIndex: 0, poolType: 1 }, // 32*16 = 512B
+                { id: 'np-2', tag: 'FREE', sizeBlocks: 200, isFree: true, prevSizeBlocks: 32, poolIndex: 0, poolType: 0 }  // 空閒 3200B
+            ],
+            
+            pagedPool: [
+                { id: 'pp-0', tag: 'NtFs', sizeBlocks: 64, isFree: false, prevSizeBlocks: 0, poolIndex: 1, poolType: 3 }, // 64*16 = 1024B
+                { id: 'pp-1', tag: 'FREE', sizeBlocks: 192, isFree: true, prevSizeBlocks: 64, poolIndex: 1, poolType: 0 }  // 空閒 3072B
+            ],
+
+            // 大額配置表
+            bigAllocationTable: [
+                { address: '0xFFFFFA80124A0000', type: 'NonPagedPool', sizePages: 2, tag: 'Ndis' }
+            ]
+        };
+
+        // 核心步進定義
+        const STEPS = [
+            {
+                name: "1. 尺寸對齊與邊界計算",
+                desc: "核心將輸入之申請長度對齊至集區粒度。x64 架構對齊單位為 16 位元組。且分配小於 4KB 時，須一併預留 8 位元組之 POOL_HEADER 空間，進而得出此次配置之所需總 Blocks 數。"
+            },
+            {
+                name: "2. 集區類型與分界決策",
+                desc: "核心對比「總 Blocks 數」與 4KB（256 Blocks）之頁面限制。大於 4080 位元組（扣除標頭）將被判定為大額配置 (Large Allocation)，轉入大額頁面配置鏈結，否則採一般集區。"
+            },
+            {
+                name: "3. 檢索空閒空間結構",
+                desc: "針對小額申請，核心優先遍歷 Lookaside List，未命中則在集區描述符 (Pool Descriptor) 內按 Block 尺寸遍歷雙向鏈結首 (ListHeads) 以尋找大小相符或較大之空閒區塊 (Free Chunk)。"
+            },
+            {
+                name: "4. 空間切割與標頭寫入",
+                desc: "核心成功在指定集區中分割出所需區塊。若是小額分配，會在區塊開頭寫入 8 位元組 POOL_HEADER（包含 PreviousSize、BlockSize、PoolType、PoolTag）；大額配置則直接寫入大額分配表，完成對應規劃。"
+            }
+        ];
+
+        // 介面初始渲染
+        window.onload = function() {
+            renderPools();
+            renderBigAllocationTable();
+            updateStepPanel();
+        };
+
+        // 更新步驟狀態板
+        function updateStepPanel() {
+            const stepNameEl = document.getElementById('current-step-name');
+            const stepDescEl = document.getElementById('step-description');
+            const progressBar = document.getElementById('step-progress-bar');
+            const nextBtn = document.getElementById('btn-next-step');
+
+            if (state.currentStep === 0) {
+                stepNameEl.innerText = "準備申請";
+                stepNameEl.className = "text-amber-400 font-medium";
+                stepDescEl.innerText = "請設定上方的要求集區類型、長度與標籤，然後點擊「執行下一步驟」逐步開始模擬核心配置規劃。";
+                progressBar.style.width = "0%";
+                nextBtn.innerText = "執行下一步驟";
+            } else {
+                const stepIdx = state.currentStep - 1;
+                const current = STEPS[stepIdx];
+                stepNameEl.innerText = current.name;
+                stepNameEl.className = "text-sky-400 font-medium";
+                stepDescEl.innerText = getDynamicStepDescription(stepIdx);
+                progressBar.style.width = `${(state.currentStep / STEPS.length) * 100}%`;
+                
+                if (state.currentStep === STEPS.length) {
+                    nextBtn.innerText = "確認並寫入集區";
+                    nextBtn.className = "flex-1 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-semibold text-xs rounded transition-all flex items-center justify-center gap-1";
+                } else {
+                    nextBtn.innerText = "執行下一步驟";
+                    nextBtn.className = "flex-1 py-2.5 px-4 bg-amber-600 hover:bg-amber-500 text-slate-950 font-semibold text-xs rounded transition-all flex items-center justify-center gap-1";
+                }
+            }
+        }
+
+        // 動態生成帶有運算數值的步驟描述
+        function getDynamicStepDescription(stepIdx) {
+            // 在此進行即時邊界對齊預算
+            const is64Bit = true;
+            const granularity = 16;
+            const headerSize = 8;
+            
+            // 計算對齊
+            const payload = state.requestedSize;
+            let totalNeeded = payload + headerSize;
+            
+            // 向上對齊 16B 粒度
+            const remainder = totalNeeded % granularity;
+            const alignedTotal = remainder === 0 ? totalNeeded : totalNeeded + (granularity - remainder);
+            const neededBlocks = alignedTotal / granularity;
+            const isLarge = alignedTotal > 4096;
+
+            state.calc.alignedPayloadSize = alignedTotal - headerSize;
+            state.calc.neededBlocks = neededBlocks;
+            state.calc.isLargeAllocation = isLarge;
+
+            switch(stepIdx) {
+                case 0:
+                    return `「對齊與邊界計算」：\n驅動申請了 ${payload} 位元組的空間。加上 8 位元組的 POOL_HEADER 後，所需的最小物理空間為 ${totalNeeded} 位元組。經過 16 位元組邊界對齊計算後，向上調整為 ${alignedTotal} 位元組（共計 ${neededBlocks} 個儲存 Blocks）。`;
+                case 1:
+                    if (isLarge) {
+                        return `「集區分界決策」：\n由於規劃之 ${alignedTotal} 位元組（${neededBlocks} Blocks）已大於 4080 位元組（約一頁），核心決定跳過一般小額集區的鏈結管理，直接判定為「大額配置 (Large Allocation)」，將以 4KB 頁面為基本對齊規劃。`;
+                    } else {
+                        return `「集區分界決策」：\n由於規劃之 ${alignedTotal} 位元組（${neededBlocks} Blocks）未達 4080 位元組分界，核心判定為「小額配置 (Small Allocation)」，將利用對應的集區雙向鏈結尋找空閒 Chunk。`;
+                    }
+                case 2:
+                    if (isLarge) {
+                        const requiredPages = Math.ceil(payload / 4096);
+                        return `「空間檢索」：\n因為判定為大額配置，核心將直接呼叫虛擬記憶體管理器（Mm）在大範圍位址段尋找連續 ${requiredPages} 頁（共 ${requiredPages * 4096} 位元組）的可分配虛擬空間。此尋找過程不會檢查 Lookaside 快取。`;
+                    } else {
+                        return `「空間檢索」：\n核心將在目標集區中尋找能容納 ${neededBlocks} Blocks 的空閒空間。首先尋找對應 ${neededBlocks} 塊大小的處理器 Lookaside 快取列表（快取未命中），隨後在集區描述符 (Pool Descriptor) 下檢索雙向鏈結串列。發現了足夠容納的空閒 Chunk。`;
+                    }
+                case 3:
+                    if (isLarge) {
+                        return `「規劃與寫入」：\n核心將在本步驟對目標集區執行寫入。大額配置會在核心全域的「大額分配表 (Big Allocation Table)」中登記一筆全新的紀錄，紀錄其配置起始虛擬位址、配置頁面數量以及驅動標籤 Tag [${state.tag}]。點擊「確認並寫入」將此分配提交。`;
+                    } else {
+                        return `「規劃與寫入」：\n核心將分割該空閒 Chunk，並為新切分出的區塊前方寫入 8 位元組的 POOL_HEADER。其 BlockSize 將寫入 ${neededBlocks}，並寫入標籤 [${state.tag}]。剩餘空閒空間將自動重新連接回原鏈結。點擊「確認並寫入」將此分配提交。`;
+                    }
+                default:
+                    return STEPS[stepIdx].desc;
+            }
+        }
+
+        // 多步操作控制器
+        function executeNextStep() {
+            if (state.calc.stepByStepDone) {
+                // 如果已經走完所有步驟，這一步就是確認寫入
+                finalizeAllocation();
+                return;
+            }
+
+            if (state.currentStep < STEPS.length) {
+                state.currentStep++;
+                if (state.currentStep === STEPS.length) {
+                    state.calc.stepByStepDone = true;
+                }
+            }
+            updateStepPanel();
+        }
+
+        // 最終寫入集區
+        function finalizeAllocation() {
+            const isLarge = state.calc.isLargeAllocation;
+            const payload = state.requestedSize;
+            const blocks = state.calc.neededBlocks;
+            const tag = state.tag;
+            const type = state.poolType;
+
+            if (isLarge) {
+                // 大額配置寫入
+                const pages = Math.ceil(payload / 4096);
+                const randomHex = Math.floor(Math.random() * 0xFFFFFF).toString(16).toUpperCase();
+                const fakeAddress = type === 'NonPagedPool' ? `0xFFFFFA800A${randomHex}000` : `0xFFFFF8A00B${randomHex}000`;
+                
+                state.bigAllocationTable.push({
+                    address: fakeAddress,
+                    type: type,
+                    sizePages: pages,
+                    tag: tag
+                });
+                
+                // 動態在前端集區線性排布中以虛擬多頁面形態展示
+                const targetPool = type === 'NonPagedPool' ? state.nonPagedPool : state.pagedPool;
+                // 追加至尾端
+                targetPool.push({
+                    id: `large-${Date.now()}`,
+                    tag: tag,
+                    sizeBlocks: pages * 256, // 整頁展示
+                    isFree: false,
+                    isLarge: true,
+                    prevSizeBlocks: targetPool[targetPool.length - 1].sizeBlocks,
+                    poolIndex: type === 'NonPagedPool' ? 0 : 1,
+                    poolType: type === 'NonPagedPool' ? 1 : 3
+                });
+
+            } else {
+                // 小額配置，尋找空閒 Chunk 並進行切分
+                const targetPool = type === 'NonPagedPool' ? state.nonPagedPool : state.pagedPool;
+                let foundFreeIndex = -1;
+                
+                for (let i = 0; i < targetPool.length; i++) {
+                    if (targetPool[i].isFree && targetPool[i].sizeBlocks >= blocks) {
+                        foundFreeIndex = i;
+                        break;
+                    }
+                }
+
+                if (foundFreeIndex !== -1) {
+                    const freeChunk = targetPool[foundFreeIndex];
+                    const originalSize = freeChunk.sizeBlocks;
+                    
+                    // 建立新的配置區
+                    const newAllocated = {
+                        id: `alloc-${Date.now()}`,
+                        tag: tag,
+                        sizeBlocks: blocks,
+                        isFree: false,
+                        prevSizeBlocks: freeChunk.prevSizeBlocks,
+                        poolIndex: type === 'NonPagedPool' ? 0 : 1,
+                        poolType: type === 'NonPagedPool' ? 1 : 3
+                    };
+
+                    // 更新空閒 Chunk (縮水並向後挪)
+                    freeChunk.sizeBlocks = originalSize - blocks;
+                    freeChunk.prevSizeBlocks = blocks;
+
+                    // 插入陣列中
+                    targetPool.splice(foundFreeIndex, 0, newAllocated);
+
+                    // 重新更新後方下一個區塊的 prevSize
+                    if (targetPool[foundFreeIndex + 2]) {
+                        targetPool[foundFreeIndex + 2].prevSizeBlocks = freeChunk.sizeBlocks;
+                    }
+                } else {
+                    // 模擬真實核心當無空間時：向虛擬記憶體分配新分頁 (4KB = 256 Blocks)
+                    const prevSize = targetPool[targetPool.length - 1].sizeBlocks;
+                    const newAllocated = {
+                        id: `alloc-${Date.now()}`,
+                        tag: tag,
+                        sizeBlocks: blocks,
+                        isFree: false,
+                        prevSizeBlocks: prevSize,
+                        poolIndex: type === 'NonPagedPool' ? 0 : 1,
+                        poolType: type === 'NonPagedPool' ? 1 : 3
+                    };
+                    const remainingFree = {
+                        id: `free-${Date.now() + 1}`,
+                        tag: 'FREE',
+                        sizeBlocks: 256 - blocks,
+                        isFree: true,
+                        prevSizeBlocks: blocks,
+                        poolIndex: type === 'NonPagedPool' ? 0 : 1,
+                        poolType: 0
+                    };
+                    targetPool.push(newAllocated, remainingFree);
+                }
+            }
+
+            // 重置多步狀態
+            state.currentStep = 0;
+            state.calc.stepByStepDone = false;
+            
+            // 重新渲染畫面
+            renderPools();
+            renderBigAllocationTable();
+            updateStepPanel();
+        }
+
+        // 設定集區類型
+        function setPoolType(type) {
+            state.poolType = type;
+            document.getElementById('btn-type-nonpaged').className = type === 'NonPagedPool' 
+                ? "py-2 px-3 text-xs font-medium rounded border border-sky-500/50 bg-sky-950/40 text-sky-300 transition-all"
+                : "py-2 px-3 text-xs font-medium rounded border border-slate-800 bg-slate-900 text-slate-400 transition-all";
+            document.getElementById('btn-type-paged').className = type === 'PagedPool' 
+                ? "py-2 px-3 text-xs font-medium rounded border border-teal-500/50 bg-teal-950/40 text-teal-300 transition-all"
+                : "py-2 px-3 text-xs font-medium rounded border border-slate-800 bg-slate-900 text-slate-400 transition-all";
+            
+            // 重置多步演練
+            state.currentStep = 0;
+            state.calc.stepByStepDone = false;
+            updateStepPanel();
+        }
+
+        // 快捷設定尺寸大小
+        function setRequestedSize(size) {
+            state.requestedSize = size;
+            document.getElementById('input-custom-size').value = size;
+            state.currentStep = 0;
+            state.calc.stepByStepDone = false;
+            updateStepPanel();
+        }
+
+        // 自訂大小輸入處理
+        function handleCustomSize(val) {
+            const parsed = parseInt(val);
+            if (!isNaN(parsed) && parsed >= 8) {
+                state.requestedSize = parsed;
+                state.currentStep = 0;
+                state.calc.stepByStepDone = false;
+                updateStepPanel();
+            }
+        }
+
+        // 標籤修改
+        function handleTagChange(val) {
+            if (val.length > 0) {
+                state.tag = val;
+                state.currentStep = 0;
+                state.calc.stepByStepDone = false;
+                updateStepPanel();
+            }
+        }
+
+        // 模擬器重置
+        function resetSimulator() {
+            state.currentStep = 0;
+            state.calc.stepByStepDone = false;
+            state.nonPagedPool = [
+                { id: 'np-0', tag: 'Init', sizeBlocks: 24, isFree: false, prevSizeBlocks: 0, poolIndex: 0, poolType: 1 },
+                { id: 'np-1', tag: 'Tcp4', sizeBlocks: 32, isFree: false, prevSizeBlocks: 24, poolIndex: 0, poolType: 1 },
+                { id: 'np-2', tag: 'FREE', sizeBlocks: 200, isFree: true, prevSizeBlocks: 32, poolIndex: 0, poolType: 0 }
+            ];
+            state.pagedPool = [
+                { id: 'pp-0', tag: 'NtFs', sizeBlocks: 64, isFree: false, prevSizeBlocks: 0, poolIndex: 1, poolType: 3 },
+                { id: 'pp-1', tag: 'FREE', sizeBlocks: 192, isFree: true, prevSizeBlocks: 64, poolIndex: 1, poolType: 0 }
+            ];
+            state.bigAllocationTable = [
+                { address: '0xFFFFFA80124A0000', type: 'NonPagedPool', sizePages: 2, tag: 'Ndis' }
+            ];
+            renderPools();
+            renderBigAllocationTable();
+            updateStepPanel();
+            document.getElementById('header-detail-panel').innerHTML = `<p class="text-slate-400 text-center py-6">請在上方排布點擊任何記憶體區塊以解析 POOL_HEADER</p>`;
+        }
+
+        // 渲染大額配置追蹤表
+        function renderBigAllocationTable() {
+            const tbody = document.getElementById('big-allocation-table-body');
+            tbody.innerHTML = '';
+            
+            if (state.bigAllocationTable.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-500">目前無大於 4KB 的大額記憶體配置。</td></tr>`;
+                return;
+            }
+
+            state.bigAllocationTable.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-900/50 transition-all";
+                tr.innerHTML = `
+                    <td class="p-2 border-b border-slate-800 text-slate-400 text-xs">${row.address}</td>
+                    <td class="p-2 border-b border-slate-800 text-xs text-sky-400">${row.type}</td>
+                    <td class="p-2 border-b border-slate-800 text-xs">${row.sizePages} 頁 (${row.sizePages * 4} KB)</td>
+                    <td class="p-2 border-b border-slate-800 text-xs text-emerald-400 tracking-wider">${row.tag}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // 動態計算並渲染集區排布
+        function renderPools() {
+            renderSinglePool('nonpaged-pool-container', state.nonPagedPool, '0xFFFFFA8000000000');
+            renderSinglePool('paged-pool-container', state.pagedPool, '0xFFFFF8a000000000');
+        }
+
+        function renderSinglePool(containerId, poolArray, baseAddressHex) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+
+            // 計算總 Blocks 數量，用於按比例設定寬度百分比
+            const totalBlocks = poolArray.reduce((acc, chunk) => acc + chunk.sizeBlocks, 0);
+            let currentOffset = 0;
+
+            poolArray.forEach(chunk => {
+                const widthPercent = (chunk.sizeBlocks / totalBlocks) * 100;
+                const chunkAddress = (BigInt(baseAddressHex) + BigInt(currentOffset * 16)).toString(16).toUpperCase();
+                
+                const blockDiv = document.createElement('div');
+                blockDiv.style.width = `${widthPercent}%`;
+                blockDiv.className = `h-full flex flex-col justify-between transition-all-custom cursor-pointer relative group`;
+                
+                // 設定底色
+                if (chunk.isFree) {
+                    blockDiv.classList.add('bg-slate-900', 'hover:bg-slate-850');
+                } else if (chunk.isLarge) {
+                    blockDiv.classList.add('bg-indigo-950/70', 'hover:bg-indigo-900/70', 'border-l-4', 'border-indigo-500');
+                } else {
+                    blockDiv.classList.add('bg-blue-950/70', 'hover:bg-blue-900/70');
+                }
+
+                // 當點擊時，顯示 POOL_HEADER 的詳細參數
+                blockDiv.onclick = () => selectChunk(chunk, chunkAddress);
+
+                // 結構化內嵌元件：包括 POOL_HEADER 與 Payload 本身
+                let innerHtml = '';
+                if (!chunk.isFree && !chunk.isLarge) {
+                    // 小額配置，明確切分 POOL_HEADER 和資料區塊
+                    // 標頭固定佔用 8B，在此處佔用此區塊內部極小一段空間（在極窄塊上我們不強制實施寬度，而以代表性雙區塊展示）
+                    innerHtml = `
+                        <div class="flex h-full w-full">
+                            <!-- POOL_HEADER 區段 -->
+                            <div class="w-1/4 min-w-[8px] bg-rose-950/80 hover:bg-rose-900 border-r border-rose-500/30 flex items-center justify-center text-[10px] text-rose-300 font-mono select-none" title="POOL_HEADER (8 Bytes)">
+                                H
+                            </div>
+                            <!-- Payload 區段 -->
+                            <div class="flex-1 flex flex-col justify-between p-1.5 overflow-hidden">
+                                <span class="text-[10px] text-slate-400 font-mono block truncate">${chunk.tag}</span>
+                                <span class="text-[9px] text-slate-500 block truncate">${chunk.sizeBlocks * 16} Bytes</span>
+                            </div>
+                        </div>
+                    `;
+                } else if (chunk.isLarge) {
+                    // 大額配置，無 POOL_HEADER
+                    innerHtml = `
+                        <div class="p-1.5 h-full flex flex-col justify-between overflow-hidden">
+                            <span class="text-[10px] text-indigo-300 font-mono tracking-wider truncate font-semibold">${chunk.tag} [L]</span>
+                            <span class="text-[9px] text-indigo-400 block truncate">${chunk.sizeBlocks / 256} Page(s)</span>
+                        </div>
+                    `;
+                } else {
+                    // 空閒區塊，全體均為空閒 Payload，不具有活躍 Header
+                    innerHtml = `
+                        <div class="p-1.5 h-full flex flex-col justify-between overflow-hidden opacity-60">
+                            <span class="text-[10px] text-slate-500 font-mono truncate">FREE</span>
+                            <span class="text-[9px] text-slate-500 block truncate">${chunk.sizeBlocks * 16} Bytes</span>
+                        </div>
+                    `;
+                }
+
+                blockDiv.innerHTML = innerHtml;
+                container.appendChild(blockDiv);
+
+                currentOffset += chunk.sizeBlocks;
+            });
+        }
+
+        // 被點擊後展開詳細分析
+        function selectChunk(chunk, address) {
+            const panel = document.getElementById('header-detail-panel');
+            
+            if (chunk.isFree) {
+                panel.innerHTML = `
+                    <div class="space-y-3">
+                        <div class="flex justify-between border-b border-slate-800 pb-2">
+                            <span class="text-slate-400">目前區塊狀態:</span>
+                            <span class="text-slate-500 font-semibold font-mono">FREE (空閒空間)</span>
+                        </div>
+                        <p class="text-slate-400 leading-relaxed text-[11px]">
+                            該記憶體區塊目前已被歸還。在 Windows 7 中，此空間不存在活躍的 POOL_HEADER 驅動記錄，已被卸載並掛載回集區描述符 (Pool Descriptor) 的 ListHeads[${chunk.sizeBlocks}] 中，隨時等待下一次分配。
+                        </p>
+                        <div class="grid grid-cols-2 gap-2 pt-2 text-[11px]">
+                            <div class="bg-slate-900 p-2 rounded border border-slate-800">
+                                <span class="text-slate-500 block">起始線性位址:</span>
+                                <span class="text-slate-300 font-mono">0x${address}</span>
+                            </div>
+                            <div class="bg-slate-900 p-2 rounded border border-slate-800">
+                                <span class="text-slate-500 block">可用容量:</span>
+                                <span class="text-slate-300 font-mono">${chunk.sizeBlocks * 16} Bytes</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            if (chunk.isLarge) {
+                panel.innerHTML = `
+                    <div class="space-y-3">
+                        <div class="flex justify-between border-b border-slate-800 pb-2">
+                            <span class="text-slate-400">分配方式:</span>
+                            <span class="text-indigo-400 font-semibold font-mono">Large/Big Allocation (大額配置)</span>
+                        </div>
+                        <p class="text-slate-400 leading-relaxed text-[11px]">
+                            因為此配置長度大於 4080 位元組，Windows 核心已繞過常規 Lookaside/ListHeads 管理。此記憶體區塊前端不含 POOL_HEADER 結構。驅動標籤 Tag [${chunk.tag}] 直接登錄在全域「大額配置表」中。
+                        </p>
+                        <div class="space-y-1 bg-slate-900 p-2 rounded border border-slate-800 font-mono text-[11px]">
+                            <div class="flex justify-between"><span class="text-slate-500">虛擬位址:</span><span class="text-slate-300">0x${address}</span></div>
+                            <div class="flex justify-between"><span class="text-slate-500">總長度:</span><span class="text-slate-300">${chunk.sizeBlocks * 16} Bytes (${chunk.sizeBlocks / 256} 頁)</span></div>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            // 精細解析 POOL_HEADER (小額)
+            // 在 x64 Windows 7 下：
+            // PreviousSize: 9 bits
+            // PoolIndex: 7 bits
+            // BlockSize: 9 bits
+            // PoolType: 7 bits
+            // PoolTag: 4 Bytes
+            const prevSize = chunk.prevSizeBlocks;
+            const blockSize = chunk.sizeBlocks;
+            const poolIndex = chunk.poolIndex;
+            const poolType = chunk.poolType;
+            const tag = chunk.tag;
+
+            // 格式化輸出
+            panel.innerHTML = `
+                <div class="space-y-4">
+                    <div class="flex justify-between border-b border-slate-800 pb-2">
+                        <span class="text-slate-400">實體虛擬位址:</span>
+                        <span class="text-rose-400 font-semibold font-mono">0x${address}</span>
+                    </div>
+
+                    <div class="space-y-2">
+                        <h3 class="text-slate-400 font-semibold text-[11px] uppercase tracking-wider">標頭參數 (共 8 Bytes)</h3>
+                        
+                        <div class="grid grid-cols-2 gap-2 text-[11px]">
+                            <div class="bg-slate-900 p-2 rounded border border-slate-800 space-y-0.5">
+                                <span class="text-slate-500 block">PreviousSize (9 bits)</span>
+                                <span class="text-slate-300 font-mono font-semibold">${prevSize} Blocks</span>
+                                <span class="text-slate-500 font-mono block">(${prevSize * 16} Bytes)</span>
+                            </div>
+                            <div class="bg-slate-900 p-2 rounded border border-slate-800 space-y-0.5">
+                                <span class="text-slate-500 block">BlockSize (9 bits)</span>
+                                <span class="text-slate-300 font-mono font-semibold">${blockSize} Blocks</span>
+                                <span class="text-slate-500 font-mono block">(${blockSize * 16} Bytes)</span>
+                            </div>
+                            <div class="bg-slate-900 p-2 rounded border border-slate-800 space-y-0.5">
+                                <span class="text-slate-500 block">PoolIndex (7 bits)</span>
+                                <span class="text-slate-300 font-mono font-semibold">${poolIndex}</span>
+                                <span class="text-slate-500 block">系統對應集區索引</span>
+                            </div>
+                            <div class="bg-slate-900 p-2 rounded border border-slate-800 space-y-0.5">
+                                <span class="text-slate-500 block">PoolType (7 bits)</span>
+                                <span class="text-slate-300 font-mono font-semibold">${poolType}</span>
+                                <span class="text-slate-500 block">集區類型屬性碼</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="border-t border-slate-800/60 pt-3 space-y-1.5">
+                        <div class="flex justify-between text-[11px]">
+                            <span class="text-slate-500">記憶體標籤 (PoolTag - 4B):</span>
+                            <span class="text-emerald-400 font-mono font-semibold tracking-wider">${tag}</span>
+                        </div>
+                        <div class="flex justify-between text-[11px]">
+                            <span class="text-slate-500">十六進位標籤值:</span>
+                            <span class="text-slate-400 font-mono">0x${getTagHex(tag)}</span>
+                        </div>
+                        <p class="text-slate-500 text-[10px] leading-relaxed mt-1">
+                            說明：當核心呼叫 ExFreePool 釋放此位址時，系統會先比對前後區塊之 BlockSize 與 PreviousSize。若不對等，系統會判定核心標頭毀損，即刻觸發藍白畫面 (Bug Check 0x19: BAD_POOL_HEADER)。
+                        </p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 字串轉十六進位表示 (Big Endian)
+        function getTagHex(str) {
+            let arr = [];
+            for (let i = 0; i < str.length; i++) {
+                arr.push(str.charCodeAt(i).toString(16).toUpperCase());
+            }
+            while(arr.length < 4) {
+                arr.push("00");
+            }
+            return arr.reverse().join(""); // Windows 核心在 x64 記憶體中為 Little Endian，故逆序展現
+        }
+    </script>
+</body>
+</html>
